@@ -111,12 +111,46 @@
                 <TextBlock x:Name="FailedCountText" FontWeight="Bold" Text="0"/>
             </StackPanel>
 
-            <StackPanel Grid.Column="1" Orientation="Horizontal">
-                <Button Content="Проверить PACS" Margin="4" Padding="14,8" Click="EchoButton_Click"/>
-                <Button x:Name="StartButton" Content="Запустить" Margin="4" Padding="14,8" Click="StartButton_Click"/>
-                <Button x:Name="StopButton" Content="Остановить" Margin="4" Padding="14,8"
-                        Click="StopButton_Click" IsEnabled="False"/>
-            </StackPanel>
+            <StackPanel Grid.Column="1"
+            Orientation="Horizontal"
+            VerticalAlignment="Center">
+
+    <TextBlock Text="Настройки:"
+               VerticalAlignment="Center"
+               Margin="0,0,8,0"
+               FontWeight="SemiBold"/>
+
+    <Button Content="Проверить PACS"
+            Margin="4"
+            Padding="14,8"
+            Click="EchoButton_Click"/>
+
+    <Button Content="Сохранить"
+            Margin="4"
+            Padding="14,8"
+            Click="SaveSettingsButton_Click"/>
+
+  <Border Width="25"/>
+
+    <TextBlock Text="Мониторинг:"
+               VerticalAlignment="Center"
+               Margin="8,0"
+               FontWeight="SemiBold"/>
+
+    <Button x:Name="StartButton"
+            Content="Запустить"
+            Margin="4"
+            Padding="14,8"
+            Click="StartButton_Click"/>
+
+    <Button x:Name="StopButton"
+            Content="Остановить"
+            Margin="4"
+            Padding="14,8"
+            Click="StopButton_Click"
+            IsEnabled="False"/>
+
+</StackPanel>
         </Grid>
     </Grid>
 </Window>

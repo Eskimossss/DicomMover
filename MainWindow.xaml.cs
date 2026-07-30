@@ -70,6 +70,19 @@ public partial class MainWindow : Window
         RemoteAeTextBox.Text = _settings.RemoteAeTitle;
         LocalAeTextBox.Text = _settings.LocalAeTitle;
     }
+	private void SaveSettings()
+{
+    var path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+
+    File.WriteAllText(
+        path,
+        JsonSerializer.Serialize(
+            _settings,
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
+            }));
+}
 
     private void ReadForm()
     {
@@ -140,7 +153,9 @@ public partial class MainWindow : Window
         try
         {
             ReadForm();
-            Directory.CreateDirectory(_settings.WatchFolder);
+SaveSettings();
+
+Directory.CreateDirectory(_settings.WatchFolder);
 
             BuildServices();
 
@@ -197,6 +212,36 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() == true)
             WatchFolderTextBox.Text = dialog.FolderName;
     }
+private void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
+{
+    try
+    {
+        ReadForm();
+        SaveSettings();
+
+        MessageBox.Show(
+            "Настройки успешно сохранены.",
+            "DicomMover",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+    catch (FormatException)
+    {
+        MessageBox.Show(
+            "Порт должен быть указан числом.",
+            "DicomMover",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+    }
+    catch (Exception ex)
+    {
+        MessageBox.Show(
+            $"Не удалось сохранить настройки:\n{ex.Message}",
+            "DicomMover",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+    }
+}
 
     private void RefreshQueue()
     {
