@@ -1,0 +1,122 @@
+<Window x:Class="DicomMover.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DicomMover"
+        Width="1050"
+        Height="700"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="170"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Padding="12" BorderBrush="#B8B8B8" BorderThickness="1" CornerRadius="6">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel>
+                    <TextBlock Text="DicomMover" FontSize="28" FontWeight="SemiBold"/>
+                    <TextBlock Text="Автоматическая отправка DICOM-файлов на PACS"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse x:Name="StatusIndicator" Width="14" Height="14" Fill="Gray" Margin="0,0,8,0"/>
+                    <TextBlock x:Name="StatusText" Text="Остановлен" FontSize="16"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <GroupBox Header="Папка наблюдения" Margin="0,12,6,0" Padding="8">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="WatchFolderTextBox" Margin="4" Padding="7"/>
+                    <Button Grid.Column="1" Content="Выбрать..." Margin="4" Padding="14,7"
+                            Click="ChooseFolder_Click"/>
+                </Grid>
+            </GroupBox>
+
+            <GroupBox Grid.Column="1" Header="PACS" Margin="6,12,0,0" Padding="8">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="100"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Text="IP / имя:" Margin="4" VerticalAlignment="Center"/>
+                    <TextBox x:Name="RemoteHostTextBox" Grid.Column="1" Margin="4" Padding="7"/>
+
+                    <TextBlock Text="Порт:" Grid.Column="2" Margin="10,4,4,4" VerticalAlignment="Center"/>
+                    <TextBox x:Name="RemotePortTextBox" Grid.Column="3" Margin="4" Padding="7"/>
+
+                    <TextBlock Text="Called AE:" Grid.Row="1" Margin="4" VerticalAlignment="Center"/>
+                    <TextBox x:Name="RemoteAeTextBox" Grid.Row="1" Grid.Column="1" Margin="4" Padding="7"/>
+
+                    <TextBlock Text="Calling AE:" Grid.Row="1" Grid.Column="2" Margin="10,4,4,4" VerticalAlignment="Center"/>
+                    <TextBox x:Name="LocalAeTextBox" Grid.Row="1" Grid.Column="3" Margin="4" Padding="7"/>
+                </Grid>
+            </GroupBox>
+        </Grid>
+
+        <GroupBox Grid.Row="2" Header="Очередь и история" Margin="0,12,0,0" Padding="8">
+            <DataGrid x:Name="QueueGrid" AutoGenerateColumns="False" IsReadOnly="True">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Файл" Binding="{Binding FileName}" Width="2*"/>
+                    <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="110"/>
+                    <DataGridTextColumn Header="Попыток" Binding="{Binding Attempts}" Width="80"/>
+                    <DataGridTextColumn Header="Время" Binding="{Binding Time}" Width="150"/>
+                    <DataGridTextColumn Header="Результат / ошибка" Binding="{Binding Result}" Width="3*"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </GroupBox>
+
+        <GroupBox Grid.Row="3" Header="Журнал" Margin="0,12,0,0" Padding="8">
+            <TextBox x:Name="LogTextBox" IsReadOnly="True" AcceptsReturn="True"
+                     FontFamily="Consolas" VerticalScrollBarVisibility="Auto"/>
+        </GroupBox>
+
+        <Grid Grid.Row="4" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Ожидают: "/>
+                <TextBlock x:Name="PendingCountText" FontWeight="Bold" Text="0"/>
+                <TextBlock Text="   Отправлено: "/>
+                <TextBlock x:Name="SentCountText" FontWeight="Bold" Text="0"/>
+                <TextBlock Text="   Ошибки: "/>
+                <TextBlock x:Name="FailedCountText" FontWeight="Bold" Text="0"/>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button Content="Проверить PACS" Margin="4" Padding="14,8" Click="EchoButton_Click"/>
+                <Button x:Name="StartButton" Content="Запустить" Margin="4" Padding="14,8" Click="StartButton_Click"/>
+                <Button x:Name="StopButton" Content="Остановить" Margin="4" Padding="14,8"
+                        Click="StopButton_Click" IsEnabled="False"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
