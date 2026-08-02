@@ -57,14 +57,14 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="100"/>
+                        <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Text="IP / имя:" Margin="4" VerticalAlignment="Center"/>
+                    <TextBlock Text="IP:" Margin="4" VerticalAlignment="Center"/>
                     <TextBox x:Name="RemoteHostTextBox" Grid.Column="1" Margin="4" Padding="7"/>
 
                     <TextBlock Text="Порт:" Grid.Column="2" Margin="10,4,4,4" VerticalAlignment="Center"/>

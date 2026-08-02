@@ -83,16 +83,67 @@ public partial class MainWindow : Window
                 WriteIndented = true
             }));
 }
+private bool TryReadForm(out string error)
+{
+    error = string.Empty;
 
-    private void ReadForm()
+    var watchFolder = WatchFolderTextBox.Text.Trim();
+    var remoteHost = RemoteHostTextBox.Text.Trim();
+    var remoteAeTitle = RemoteAeTextBox.Text.Trim().ToUpperInvariant();
+    var localAeTitle = LocalAeTextBox.Text.Trim().ToUpperInvariant();
+
+    if (string.IsNullOrWhiteSpace(watchFolder))
     {
-        _settings.WatchFolder = WatchFolderTextBox.Text.Trim();
-        _settings.RemoteHost = RemoteHostTextBox.Text.Trim();
-        _settings.RemotePort = int.Parse(RemotePortTextBox.Text);
-        _settings.RemoteAeTitle = RemoteAeTextBox.Text.Trim().ToUpperInvariant();
-        _settings.LocalAeTitle = LocalAeTextBox.Text.Trim().ToUpperInvariant();
+        error = "Укажите папку наблюдения.";
+        return false;
     }
 
+    if (string.IsNullOrWhiteSpace(remoteHost))
+    {
+        error = "Укажите IP-адрес или имя PACS.";
+        return false;
+    }
+
+    if (!int.TryParse(RemotePortTextBox.Text.Trim(), out var remotePort) ||
+        remotePort < 1 || remotePort > 65535)
+    {
+        error = "Порт должен быть числом от 1 до 65535.";
+        return false;
+    }
+
+    if (string.IsNullOrWhiteSpace(remoteAeTitle))
+    {
+        error = "Укажите Called AE.";
+        return false;
+    }
+
+    if (remoteAeTitle.Length > 16)
+    {
+        error = "Called AE не должен превышать 16 символов.";
+        return false;
+    }
+
+    if (string.IsNullOrWhiteSpace(localAeTitle))
+    {
+        error = "Укажите Calling AE.";
+        return false;
+    }
+
+    if (localAeTitle.Length > 16)
+    {
+        error = "Calling AE не должен превышать 16 символов.";
+        return false;
+    }
+
+    _settings.WatchFolder = watchFolder;
+    _settings.RemoteHost = remoteHost;
+    _settings.RemotePort = remotePort;
+    _settings.RemoteAeTitle = remoteAeTitle;
+    _settings.LocalAeTitle = localAeTitle;
+
+    return true;
+}
+   
     private void BuildServices()
     {
         _logger = new AppLogger(_settings.LogFile);
@@ -108,9 +159,23 @@ public partial class MainWindow : Window
 
     private async void EchoButton_Click(object sender, RoutedEventArgs e)
     {
+		
         try
         {
-            ReadForm();
+                    if (!TryReadForm(out var error))
+        {
+            StatusIndicator.Fill = Brushes.Red;
+            StatusText.Text = "Ошибка настроек";
+
+            MessageBox.Show(
+                error,
+                "DicomMover",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+
+            return;
+        }
+
 
             DicomStatus? responseStatus = null;
 
@@ -144,39 +209,127 @@ public partial class MainWindow : Window
             _logger?.Error($"Ошибка C-ECHO: {ex.Message}");
         }
     }
-
-    private async void StartButton_Click(object sender, RoutedEventArgs e)
+private async Task<bool> CheckPacsAsync()
+{
+    try
     {
-        if (_monitorTask is not null)
-            return;
+        DicomStatus? responseStatus = null;
 
-        try
+        var request = new DicomCEchoRequest
         {
-            ReadForm();
-SaveSettings();
+            OnResponseReceived = (_, response) =>
+                responseStatus = response.Status
+        };
 
-Directory.CreateDirectory(_settings.WatchFolder);
+        var client = DicomClientFactory.Create(
+            _settings.RemoteHost,
+            _settings.RemotePort,
+            false,
+            _settings.LocalAeTitle,
+            _settings.RemoteAeTitle);
 
-            BuildServices();
+        await client.AddRequestAsync(request);
 
-            _cts = new CancellationTokenSource();
-            _monitorTask = Task.Run(
-                () => _monitor!.RunAsync(_cts.Token));
+        await client.SendAsync(
+            CancellationToken.None,
+            DicomClientCancellationMode.ImmediatelyReleaseAssociation);
 
-            StartButton.IsEnabled = false;
-            StopButton.IsEnabled = true;
-            StatusIndicator.Fill = Brushes.Green;
-            StatusText.Text = "Мониторинг активен";
+        var success = responseStatus?.State == DicomState.Success;
 
-            _logger?.Info("Мониторинг запущен.");
+        StatusIndicator.Fill = success
+            ? Brushes.Green
+            : Brushes.Red;
 
-            await Task.Delay(50);
-        }
-        catch (Exception ex)
+        StatusText.Text = success
+            ? "PACS доступен"
+            : "PACS не ответил";
+
+        if (success)
         {
-            MessageBox.Show(ex.Message, "DicomMover");
+            _logger?.Info(
+                "Проверка PACS выполнена успешно. C-ECHO: Success.");
         }
+        else
+        {
+            _logger?.Warn(
+                $"PACS не подтвердил C-ECHO. Статус: {responseStatus}");
+        }
+
+        return success;
     }
+    catch (Exception ex)
+    {
+        StatusIndicator.Fill = Brushes.Red;
+        StatusText.Text = "PACS недоступен";
+
+        _logger?.Error(
+            $"Ошибка проверки PACS: {ex.Message}");
+
+        return false;
+    }
+}
+  private async void StartButton_Click(object sender, RoutedEventArgs e)
+{
+    if (_monitorTask is not null)
+        return;
+
+    try
+    {
+        if (!TryReadForm(out var error))
+        {
+            MessageBox.Show(
+                error,
+                "DicomMover",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+
+            return;
+        }
+
+        SaveSettings();
+
+        var pacsAvailable = await CheckPacsAsync();
+
+        if (!pacsAvailable)
+        {
+            var result = MessageBox.Show(
+                "PACS сейчас недоступен.\n\nЗапустить мониторинг всё равно?",
+                "DicomMover",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (result != MessageBoxResult.Yes)
+                return;
+        }
+
+        Directory.CreateDirectory(_settings.WatchFolder);
+
+        BuildServices();
+
+        _cts = new CancellationTokenSource();
+
+        _monitorTask = Task.Run(
+            () => _monitor!.RunAsync(_cts.Token));
+
+        StartButton.IsEnabled = false;
+        StopButton.IsEnabled = true;
+
+        StatusIndicator.Fill = Brushes.Green;
+        StatusText.Text = "Мониторинг активен";
+
+        _logger?.Info("Мониторинг запущен.");
+
+        await Task.Delay(50);
+    }
+    catch (Exception ex)
+    {
+        MessageBox.Show(
+            ex.Message,
+            "DicomMover",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+    }
+}
 
     private async void StopButton_Click(object sender, RoutedEventArgs e)
     {
@@ -216,8 +369,20 @@ private void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
 {
     try
     {
-        ReadForm();
+        if (!TryReadForm(out var error))
+{
+    MessageBox.Show(
+        error,
+        "DicomMover",
+        MessageBoxButton.OK,
+        MessageBoxImage.Warning);
+
+    return;
+}
+
         SaveSettings();
+		
+		_logger?.Info("Настройки сохранены.");
 
         MessageBox.Show(
             "Настройки успешно сохранены.",
