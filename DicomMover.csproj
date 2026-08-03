@@ -6,12 +6,27 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>Assets\dicommover.ico</ApplicationIcon>
+    <Version>1.2.0</Version>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <FileVersion>1.2.0.0</FileVersion>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\dicommover-logo.png" />
+    <Content Include="Assets\dicommover.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="fo-dicom" Version="5.2.6" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.29" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="DicomMover.Tests\**\*.cs" />
+    <None Remove="DicomMover.Tests\**\*" />
   </ItemGroup>
 
 </Project>

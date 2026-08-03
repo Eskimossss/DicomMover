@@ -1,0 +1,41 @@
+<Window x:Class="DicomMover.StudyDetailsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Подробности исследования" Width="850" Height="520"
+        Icon="Assets/dicommover.ico" WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="14">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Повторить отправку на PACS" Padding="12,7" Margin="4" Click="RetrySelected_Click"
+                    ToolTip="Повторно поставить в очередь доставку на выбранный PACS, если она ещё не была успешно выполнена."/>
+            <Button Content="Закрыть" Padding="18,7" Margin="4" IsCancel="True"/>
+        </StackPanel>
+        <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                <TextBlock Text="ФИО:" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="PatientNameText" Grid.Column="1" Margin="3"/>
+                <TextBlock Text="SOP Instance UID:" Grid.Row="1" FontWeight="SemiBold" Margin="3"/><TextBox x:Name="SopUidText" Grid.Row="1" Grid.Column="1" IsReadOnly="True" BorderThickness="0" Margin="3"/>
+                <TextBlock Text="Путь:" Grid.Row="2" FontWeight="SemiBold" Margin="3"/><TextBox x:Name="FilePathText" Grid.Row="2" Grid.Column="1" IsReadOnly="True" BorderThickness="0" TextWrapping="Wrap" Margin="3"/>
+                <TextBlock Text="Статус:" Grid.Row="3" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="StatusText" Grid.Row="3" Grid.Column="1" Margin="3"/>
+                <TextBlock Text="Последняя ошибка:" Grid.Row="4" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="LastErrorText" Grid.Row="4" Grid.Column="1" TextWrapping="Wrap" Foreground="#A00000" Margin="3"/>
+                <TextBlock Text="Patient ID:" Grid.Row="5" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="PatientIdText" Grid.Row="5" Grid.Column="1" Margin="3"/>
+                <TextBlock Text="Дата рождения:" Grid.Row="6" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="BirthDateText" Grid.Row="6" Grid.Column="1" Margin="3"/>
+                <TextBlock Text="Модальность:" Grid.Row="7" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="ModalityText" Grid.Row="7" Grid.Column="1" Margin="3"/>
+                <TextBlock Text="Study Instance UID:" Grid.Row="8" FontWeight="SemiBold" Margin="3"/><TextBox x:Name="StudyUidText" Grid.Row="8" Grid.Column="1" IsReadOnly="True" BorderThickness="0" Margin="3"/>
+                <TextBlock Text="Accession Number:" Grid.Row="9" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="AccessionText" Grid.Row="9" Grid.Column="1" Margin="3"/>
+                <TextBlock Text="Дата исследования:" Grid.Row="10" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="StudyDateText" Grid.Row="10" Grid.Column="1" Margin="3"/>
+            </Grid>
+            <DataGrid x:Name="DeliveriesGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="PACS" Binding="{Binding PacsName}" Width="*"/>
+                    <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="110"/>
+                    <DataGridTextColumn Header="Попыток" Binding="{Binding AttemptCount}" Width="70"/>
+                    <DataGridTextColumn Header="Последняя попытка" Binding="{Binding LastAttemptAtUtc, StringFormat={}{0:dd.MM.yyyy HH:mm:ss}}" Width="150"/>
+                    <DataGridTextColumn Header="Отправлено" Binding="{Binding SentAtUtc, StringFormat={}{0:dd.MM.yyyy HH:mm:ss}}" Width="150"/>
+                    <DataGridTextColumn Header="Ошибка / ответ" Binding="{Binding LastError}" Width="2*"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+    </DockPanel>
+</Window>

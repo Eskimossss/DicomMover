@@ -4,13 +4,15 @@
         Title="DicomMover"
         Width="1050"
         Height="700"
+        Icon="Assets/dicommover.ico"
         WindowStartupLocation="CenterScreen">
     <Grid Margin="14">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="170"/>
+            <RowDefinition Height="*" MinHeight="160"/>
+            <RowDefinition Height="6"/>
+            <RowDefinition Height="200" MinHeight="90"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -21,9 +23,16 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel>
-                    <TextBlock Text="DicomMover" FontSize="28" FontWeight="SemiBold"/>
-                    <TextBlock Text="Автоматическая отправка DICOM-файлов на PACS"/>
+                <StackPanel Orientation="Horizontal">
+                    <Image Source="Assets/dicommover-logo.png"
+                           Width="58" Height="58" Margin="0,0,12,0"/>
+                    <StackPanel VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="DicomMover" FontSize="28" FontWeight="SemiBold"/>
+                            <TextBlock Text="  1.2" Foreground="#7A8491" VerticalAlignment="Bottom" Margin="0,0,0,5"/>
+                        </StackPanel>
+                        <TextBlock Text="Автоматическая отправка DICOM-файлов на PACS"/>
+                    </StackPanel>
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
@@ -33,70 +42,169 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="1">
+        <Border Grid.Row="1" Margin="0,12,0,0" Padding="10" Background="#F5F8FC" CornerRadius="5">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Настройки" Padding="16,7" Click="SettingsButton_Click"/>
+                <StackPanel>
+                    <TextBlock x:Name="ConfigurationSummaryText" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                    <WrapPanel x:Name="RuntimeStatusPanel" Margin="0,6,0,0"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+       <GroupBox Grid.Row="2"
+          Margin="0,12,0,0"
+          Padding="8">
+
+   <GroupBox.Header>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Text="Очередь и история"
+                   VerticalAlignment="Center"
+                   FontWeight="SemiBold"/>
+
+        <StackPanel Grid.Column="1"
+                    Orientation="Horizontal">
+
+            <Button Content="Повторить отправку"
+                    Margin="12,0,4,0"
+                    Padding="10,4"
+                    Click="RetryFailedButton_Click"/>
+
+            <Button Content="Очистить историю"
+                    Margin="4,0,0,0"
+                    Padding="10,4"
+                    Click="ClearHistoryButton_Click"/>
+
+            <Button Content="Столбцы"
+                    Margin="4,0,0,0" Padding="10,4"
+                    Click="ColumnsButton_Click"/>
+
+        </StackPanel>
+    </Grid>
+</GroupBox.Header>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <WrapPanel Margin="0,0,0,6">
+            <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+            <TextBox x:Name="SearchTextBox" Width="230" Margin="0,0,10,0" TextChanged="Filter_Changed"
+                     ToolTip="Поиск по файлу, ФИО, UID, модальности или ошибке."/>
+            <TextBlock Text="Статус:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+            <ComboBox x:Name="StatusFilterCombo" Width="145" SelectedIndex="0" SelectionChanged="Filter_Changed">
+                <ComboBoxItem Content="Все"/><ComboBoxItem Content="Ожидает"/><ComboBoxItem Content="Отправляется"/>
+                <ComboBoxItem Content="Отправлен частично"/><ComboBoxItem Content="Отправлено"/><ComboBoxItem Content="Ошибка"/>
+            </ComboBox>
+            <TextBlock Text="PACS:" VerticalAlignment="Center" Margin="10,0,4,0"/>
+            <ComboBox x:Name="PacsFilterCombo" Width="160" SelectedIndex="0" SelectionChanged="Filter_Changed"/>
+        </WrapPanel>
+    <DataGrid x:Name="QueueGrid" Grid.Row="1"
+              AutoGenerateColumns="False"
+              IsReadOnly="True"
+              MouseDoubleClick="QueueGrid_MouseDoubleClick">
+        <DataGrid.ContextMenu>
+            <ContextMenu>
+                <MenuItem Header="Подробности" Click="DetailsMenuItem_Click"/>
+                <MenuItem Header="Повторить отправку" Click="RetryItemMenuItem_Click"/>
+                <Separator/>
+                <MenuItem Header="Открыть расположение файла" Click="OpenFileLocationMenuItem_Click"/>
+                <MenuItem Header="Скопировать ошибку" Click="CopyErrorMenuItem_Click"/>
+                <MenuItem Header="Скрыть запись" Click="HideItemMenuItem_Click"/>
+            </ContextMenu>
+        </DataGrid.ContextMenu>
+
+        <DataGrid.Columns>
+            <DataGridTemplateColumn Header="" Width="28" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                        <Ellipse Width="9" Height="9" Fill="{Binding StatusColor}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+            <DataGridTextColumn x:Name="FileColumn" Header="Файл"
+                                Binding="{Binding FileName}"
+                                Width="2*"/>
+
+            <DataGridTextColumn x:Name="PatientColumn" Header="ФИО"
+                                Binding="{Binding PatientName}"
+                                Width="2*"/>
+
+            <DataGridTextColumn x:Name="ModalityColumn" Header="Модальность"
+                                Binding="{Binding Modality}"
+                                Width="90"/>
+
+            <DataGridTextColumn x:Name="StatusColumn" Header="Статус"
+                                Binding="{Binding Status}"
+                                Width="110"/>
+
+            <DataGridTextColumn x:Name="AttemptsColumn" Header="Попыток"
+                                Binding="{Binding Attempts}"
+                                Width="80"/>
+
+            <DataGridTextColumn x:Name="TimeColumn" Header="Время"
+                                Binding="{Binding Time}"
+                                Width="150"/>
+
+            <DataGridTextColumn x:Name="ErrorColumn" Header="Ошибка"
+                                Binding="{Binding Result}"
+                                Width="3*"/>
+            <DataGridTextColumn x:Name="PacsColumn" Header="PACS"
+                                Binding="{Binding PacsResults}"
+                                Width="2*"/>
+        </DataGrid.Columns>
+    </DataGrid>
+    </Grid>
+</GroupBox>
+
+        <GridSplitter Grid.Row="3"
+                      Height="6"
+                      HorizontalAlignment="Stretch"
+                      VerticalAlignment="Center"
+                      Background="#D7DCE3"
+                      ResizeDirection="Rows"
+                      ResizeBehavior="PreviousAndNext"
+                      Cursor="SizeNS"
+                      ToolTip="Перетащите, чтобы изменить высоту журнала"/>
+
+        <GroupBox Grid.Row="4"
+          Margin="0,12,0,0"
+          Padding="8">
+
+    <GroupBox.Header>
+        <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <GroupBox Header="Папка наблюдения" Margin="0,12,6,0" Padding="8">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox x:Name="WatchFolderTextBox" Margin="4" Padding="7"/>
-                    <Button Grid.Column="1" Content="Выбрать..." Margin="4" Padding="14,7"
-                            Click="ChooseFolder_Click"/>
-                </Grid>
-            </GroupBox>
+            <TextBlock Text="Журнал"
+                       VerticalAlignment="Center"
+                       FontWeight="SemiBold"/>
 
-            <GroupBox Grid.Column="1" Header="PACS" Margin="6,12,0,0" Padding="8">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-
-                    <TextBlock Text="IP:" Margin="4" VerticalAlignment="Center"/>
-                    <TextBox x:Name="RemoteHostTextBox" Grid.Column="1" Margin="4" Padding="7"/>
-
-                    <TextBlock Text="Порт:" Grid.Column="2" Margin="10,4,4,4" VerticalAlignment="Center"/>
-                    <TextBox x:Name="RemotePortTextBox" Grid.Column="3" Margin="4" Padding="7"/>
-
-                    <TextBlock Text="Called AE:" Grid.Row="1" Margin="4" VerticalAlignment="Center"/>
-                    <TextBox x:Name="RemoteAeTextBox" Grid.Row="1" Grid.Column="1" Margin="4" Padding="7"/>
-
-                    <TextBlock Text="Calling AE:" Grid.Row="1" Grid.Column="2" Margin="10,4,4,4" VerticalAlignment="Center"/>
-                    <TextBox x:Name="LocalAeTextBox" Grid.Row="1" Grid.Column="3" Margin="4" Padding="7"/>
-                </Grid>
-            </GroupBox>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0">
+                <Button Content="Очистить журнал" Margin="0,0,4,0" Padding="10,4" Click="ClearLogButton_Click"/>
+                <Button Content="Папка журналов" Padding="10,4" Click="OpenLogFolderButton_Click"/>
+            </StackPanel>
         </Grid>
+    </GroupBox.Header>
 
-        <GroupBox Grid.Row="2" Header="Очередь и история" Margin="0,12,0,0" Padding="8">
-            <DataGrid x:Name="QueueGrid" AutoGenerateColumns="False" IsReadOnly="True">
-                <DataGrid.Columns>
-                    <DataGridTextColumn Header="Файл" Binding="{Binding FileName}" Width="2*"/>
-                    <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="110"/>
-                    <DataGridTextColumn Header="Попыток" Binding="{Binding Attempts}" Width="80"/>
-                    <DataGridTextColumn Header="Время" Binding="{Binding Time}" Width="150"/>
-                    <DataGridTextColumn Header="Результат / ошибка" Binding="{Binding Result}" Width="3*"/>
-                </DataGrid.Columns>
-            </DataGrid>
-        </GroupBox>
+    <TextBox x:Name="LogTextBox"
+             IsReadOnly="True"
+             AcceptsReturn="True"
+             FontFamily="Consolas"
+             VerticalScrollBarVisibility="Auto"
+             HorizontalScrollBarVisibility="Auto"
+             TextWrapping="NoWrap"/>
+</GroupBox>
 
-        <GroupBox Grid.Row="3" Header="Журнал" Margin="0,12,0,0" Padding="8">
-            <TextBox x:Name="LogTextBox" IsReadOnly="True" AcceptsReturn="True"
-                     FontFamily="Consolas" VerticalScrollBarVisibility="Auto"/>
-        </GroupBox>
-
-        <Grid Grid.Row="4" Margin="0,12,0,0">
+        <Grid Grid.Row="5" Margin="0,12,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
@@ -109,28 +217,12 @@
                 <TextBlock x:Name="SentCountText" FontWeight="Bold" Text="0"/>
                 <TextBlock Text="   Ошибки: "/>
                 <TextBlock x:Name="FailedCountText" FontWeight="Bold" Text="0"/>
+                <TextBlock x:Name="DailySummaryText" Margin="18,0,0,0" Foreground="#5B6470"/>
             </StackPanel>
 
             <StackPanel Grid.Column="1"
             Orientation="Horizontal"
             VerticalAlignment="Center">
-
-    <TextBlock Text="Настройки:"
-               VerticalAlignment="Center"
-               Margin="0,0,8,0"
-               FontWeight="SemiBold"/>
-
-    <Button Content="Проверить PACS"
-            Margin="4"
-            Padding="14,8"
-            Click="EchoButton_Click"/>
-
-    <Button Content="Сохранить"
-            Margin="4"
-            Padding="14,8"
-            Click="SaveSettingsButton_Click"/>
-
-  <Border Width="25"/>
 
     <TextBlock Text="Мониторинг:"
                VerticalAlignment="Center"

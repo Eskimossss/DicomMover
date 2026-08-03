@@ -1,0 +1,26 @@
+<Window x:Class="DicomMover.HistoryCleanupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Очистить историю" Width="500" Height="280"
+        Icon="Assets/dicommover.ico" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="18">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Очистить" Padding="18,7" Margin="4" Click="Confirm_Click"/>
+            <Button Content="Отмена" Padding="18,7" Margin="4" IsCancel="True"/>
+        </StackPanel>
+        <StackPanel>
+            <TextBlock Text="Какие записи скрыть из очереди и истории?" FontWeight="SemiBold" Margin="0,0,0,12"/>
+            <RadioButton x:Name="SentOnlyRadio" IsChecked="True" Margin="4"
+                         Content="Скрыть только успешно отправленные записи"
+                         ToolTip="Ошибки, частичные отправки и ожидающие файлы останутся видимыми."/>
+            <RadioButton x:Name="AllRecordsRadio" Margin="4"
+                         Content="Скрыть все записи"
+                         ToolTip="Скрывает успешные, ошибочные, частичные и ожидающие записи. Данные из SQLite не удаляются."/>
+            <Border Margin="4,14,4,0" Padding="10" Background="#F5F7FA" CornerRadius="4">
+                <TextBlock Foreground="#555" TextWrapping="Wrap"
+                           Text="Записи только скрываются из интерфейса. Исходные DICOM-файлы и данные SQLite не удаляются. Защита от повторной отправки сохраняется."/>
+            </Border>
+        </StackPanel>
+    </DockPanel>
+</Window>

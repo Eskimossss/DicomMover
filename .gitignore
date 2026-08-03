@@ -3,12 +3,16 @@ obj/
 publish/
 .vs/
 .idea/
+.dotnet-cli/
 
 *.user
 *.suo
 
 data/
 logs/
+backups/
+appsettings.json
+appsettings.json.bak
 *.db
 *.db-shm
 *.db-wal
