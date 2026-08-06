@@ -212,3 +212,7 @@ dotnet publish DicomMover.csproj -c Release -r win-x64 --self-contained true `
 ### Версия
 
 Текущая стабильная версия: **1.3**. Полный список изменений находится в [docs/CHANGELOG.md](docs/CHANGELOG.md).
+
+## Лицензия
+
+Проект распространяется по лицензии [MIT](LICENSE).
