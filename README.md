@@ -8,6 +8,14 @@ DicomMover — переносимая Windows-программа для авто
 
 Программа хранит очередь в SQLite, проверяет PACS через C-ECHO, восстанавливает незавершённую работу после перезапуска и защищает PACS от повторной отправки одного SOP Instance UID.
 
+## Скачать
+
+- [DicomMover 1.3 для Windows x64 — ZIP](https://github.com/Eskimossss/DicomMover/releases/download/1.3/DicomMover-1.3-win-x64.zip) — рекомендуемый вариант: распакуйте архив в отдельную папку и запустите EXE.
+- [DicomMover 1.3 для Windows x64 — EXE](https://github.com/Eskimossss/DicomMover/releases/download/1.3/DicomMover-1.3-win-x64.exe) — автономный исполняемый файл без архива.
+- [Страница релиза и контрольные суммы](https://github.com/Eskimossss/DicomMover/releases/tag/1.3).
+
+Готовая portable-версия работает в Windows 10/11 x64 и не требует отдельной установки .NET Desktop Runtime. Настройки, база SQLite, журналы и резервные копии создаются рядом с EXE.
+
 ## Интерфейс
 
 ![Главное окно DicomMover 1.3](docs/images/main-window.png)
@@ -209,32 +217,53 @@ backups/                  ежедневные резервные копии SQL
 
 При завершении Windows программа отменяет текущую операцию, корректно возвращает незавершённую доставку в очередь и закрывает SQLite. Одновременно может работать только один экземпляр DicomMover.
 
-## Требования и сборка
+## Разработка и сборка
 
-Для обычного framework-dependent запуска:
+Этот раздел нужен разработчикам, которые хотят изучить код, изменить программу или проверить свою версию. Для разработки требуются:
 
 - Windows 10/11;
-- .NET 8 Desktop Runtime.
-
-Для разработки:
-
 - .NET 8 SDK;
 - Visual Studio 2022 либо командная строка .NET.
 
+| Команда | Что делает |
+|---|---|
+| `dotnet restore` | Загружает зависимости NuGet, необходимые проекту. Программу не запускает и не устанавливает. |
+| `dotnet build DicomMover.csproj` | Компилирует обычную Debug-сборку в локальную папку `bin\Debug\net8.0-windows`. Ничего не публикует в интернет. |
+| `dotnet test DicomMover.Tests\DicomMover.Tests.csproj` | Компилирует приложение и тестовый проект, затем запускает автоматические проверки. |
+| `dotnet publish ...` | Создаёт готовую Release-сборку в указанной локальной папке. На GitHub она автоматически не загружается. |
+
+### Автоматические тесты `DicomMover.Tests`
+
+`DicomMover.Tests` — отдельный проект с автоматическими тестами на xUnit. Он не входит в готовый EXE и нужен только при разработке. Другой разработчик может изменить DicomMover, добавить собственные тесты и проверить, что существующая логика не сломалась.
+
+На момент выпуска 1.3 набор из 23 тестов проверяет, в частности:
+
+- первый запуск и сохранение настроек;
+- миграцию конфигурации старых версий;
+- проверку интервалов и пересекающихся наблюдаемых папок;
+- очередь, повторные отправки и восстановление незавершённой работы;
+- дедупликацию по SOP Instance UID;
+- фильтр Study Date и резервное копирование SQLite.
+
+Запуск всех тестов:
+
 ```powershell
-dotnet restore
-dotnet build DicomMover.csproj
 dotnet test DicomMover.Tests\DicomMover.Tests.csproj
 ```
 
-Публикация автономной версии для Windows x64:
+### Локальная публикация portable-версии
+
+Следующая команда создаёт автономный EXE для Windows x64 в папке `publish\DicomMover-1.3-win-x64` на текущем компьютере:
 
 ```powershell
 dotnet publish DicomMover.csproj -c Release -r win-x64 --self-contained true `
+  -o publish\DicomMover-1.3-win-x64 `
   -p:PublishSingleFile=true `
   -p:IncludeNativeLibrariesForSelfExtract=true `
   -p:EnableCompressionInSingleFile=true
 ```
+
+Папки `bin`, `obj` и `publish` являются локальными результатами сборки и исключены из Git. Чтобы приложить готовые файлы к версии на GitHub, их нужно отдельно загрузить в GitHub Release.
 
 ## Версия
 
