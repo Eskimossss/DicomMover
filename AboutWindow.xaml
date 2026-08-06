@@ -1,0 +1,37 @@
+<Window x:Class="DicomMover.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="О программе DicomMover" Width="650" Height="440"
+        MinWidth="560" MinHeight="390" ResizeMode="CanResize"
+        Icon="Assets/dicommover.ico" WindowStartupLocation="CenterOwner"
+        Background="#F4F7FB" FontFamily="Segoe UI" FontSize="13">
+    <Window.Resources>
+        <Style TargetType="TextBox">
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Margin" Value="0,4,0,12"/>
+            <Setter Property="Background" Value="#F8FAFC"/>
+            <Setter Property="BorderBrush" Value="#CBD5E1"/>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="18">
+        <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Border Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="9" Padding="20">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                        <Image Source="Assets/dicommover-logo.png" Width="58" Height="58" Margin="0,0,14,0"/>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="DicomMover" FontSize="24" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="VersionText" Foreground="#667085"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <TextBlock Text="Portable-программа для автоматической отправки DICOM-файлов на PACS." TextWrapping="Wrap" Margin="0,0,0,18"/>
+                    <TextBlock Text="Папка программы" FontWeight="SemiBold"/><TextBox x:Name="ProgramFolderText" IsReadOnly="True"/>
+                    <TextBlock Text="База данных SQLite" FontWeight="SemiBold"/><TextBox x:Name="DatabasePathText" IsReadOnly="True"/>
+                    <TextBlock Text="Папка журналов" FontWeight="SemiBold"/><TextBox x:Name="LogsFolderText" IsReadOnly="True"/>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+        <Button Grid.Row="1" Content="Закрыть" IsCancel="True" HorizontalAlignment="Right" Padding="20,8" Margin="0,12,0,0"/>
+    </Grid>
+</Window>

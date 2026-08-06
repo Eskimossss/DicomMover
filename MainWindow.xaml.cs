@@ -31,11 +31,13 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _cts;
     private Task? _monitorTask;
     private bool _exitRequested;
+    private bool _isUiInitialized;
     private DateTime _lastTrayNotificationUtc;
 
     public MainWindow()
     {
         InitializeComponent();
+        _isUiInitialized = true;
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         Directory.SetCurrentDirectory(AppContext.BaseDirectory);
         new DicomSetupBuilder().RegisterServices(services => services.AddFellowOakDicom()).Build();
@@ -44,13 +46,13 @@ public partial class MainWindow : Window
         try
         {
             _settings = _settingsStore.Load();
-            BuildServices(_settings.Copy());
+            if (_settings.WatchFolders.Count > 0 && _settings.PacsServers.Count > 0)
+                BuildServices(_settings.Copy());
             ApplyWindowsStartup();
         }
         catch (Exception ex)
         {
             _settings = new AppSettings();
-            _settings.NormalizeLegacy();
             MessageBox.Show($"Не удалось загрузить настройки или SQLite:\n\n{ex.Message}", "DicomMover", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
@@ -132,16 +134,22 @@ public partial class MainWindow : Window
             BuildServices(_settings.Copy());
             _cts = new CancellationTokenSource();
             _monitorTask = Task.Run(() => _monitor!.RunAsync(_cts.Token));
-            StartButton.IsEnabled = false;
-            StopButton.IsEnabled = true;
-            StatusIndicator.Fill = Brushes.Green;
+            StartButton.IsEnabled = true;
+            StartButton.Content = "■  Остановить мониторинг";
+            StartButton.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(220, 38, 38));
+            StartButton.BorderBrush = StartButton.Background;
+            StatusIndicator.Fill = new SolidColorBrush(System.Windows.Media.Color.FromRgb(22, 163, 74));
             StatusText.Text = "Мониторинг активен";
+            StatusBadge.SetResourceReference(Border.BackgroundProperty, "StatusActiveBackgroundBrush");
             await Task.Delay(50);
         }
         catch (Exception ex)
         {
             _monitorTask = null;
             StartButton.IsEnabled = true;
+            StartButton.Content = "▶  Запустить мониторинг";
+            StartButton.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "PrimaryBrush");
+            StartButton.SetResourceReference(System.Windows.Controls.Control.BorderBrushProperty, "PrimaryBrush");
             MessageBox.Show(ex.Message, "Не удалось запустить мониторинг", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -237,14 +245,21 @@ public partial class MainWindow : Window
             _cts?.Dispose();
             _cts = null;
             StartButton.IsEnabled = true;
-            StopButton.IsEnabled = false;
-            StatusIndicator.Fill = Brushes.Gray;
-            StatusText.Text = "Остановлен";
+            StartButton.Content = "▶  Запустить мониторинг";
+            StartButton.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "PrimaryBrush");
+            StartButton.SetResourceReference(System.Windows.Controls.Control.BorderBrushProperty, "PrimaryBrush");
+            StatusIndicator.Fill = new SolidColorBrush(System.Windows.Media.Color.FromRgb(138, 148, 163));
+            StatusText.Text = "Мониторинг остановлен";
+            StatusBadge.SetResourceReference(Border.BackgroundProperty, "StatusStoppedBackgroundBrush");
         }
     }
 
-    private async void StartButton_Click(object sender, RoutedEventArgs e) => await StartMonitoringAsync();
-    private async void StopButton_Click(object sender, RoutedEventArgs e) => await StopMonitoringAsync();
+    private async void MonitorToggleButton_Click(object sender, RoutedEventArgs e)
+    {
+        StartButton.IsEnabled = false;
+        if (_monitorTask is null) await StartMonitoringAsync();
+        else await StopMonitoringAsync();
+    }
 
     private async void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
@@ -272,6 +287,9 @@ public partial class MainWindow : Window
         catch (Exception ex) { MessageBox.Show(ex.Message, "Не удалось сохранить настройки", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
 
+    private void AboutButton_Click(object sender, RoutedEventArgs e) =>
+        new AboutWindow(_settings) { Owner = this }.ShowDialog();
+
     private void ApplyWindowsStartup()
     {
         try { WindowsStartupManager.Apply(_settings.StartWithWindows); }
@@ -280,7 +298,24 @@ public partial class MainWindow : Window
 
     private void UpdateConfigurationSummary()
     {
-        ConfigurationSummaryText.Text = $"Папок: {_settings.WatchFolders.Count(f => f.Enabled)}   PACS: {_settings.PacsServers.Count(p => p.Enabled)}   Проверка: {_settings.ScanIntervalSeconds} сек.";
+        ConfigurationSummaryText.Text = "Управление папками и PACS";
+        var ready = IsConfigurationReady();
+        ConfigurationRequiredPanel.Visibility = ready ? Visibility.Collapsed : Visibility.Visible;
+        EmptyQueuePanel.Visibility = ready && _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        StartButton.IsEnabled = ready || _monitorTask is not null;
+    }
+
+    private bool IsConfigurationReady()
+    {
+        try
+        {
+            _settings.Copy().Validate();
+            return true;
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
     }
 
     private void PopulatePacsFilter()
@@ -341,7 +376,15 @@ public partial class MainWindow : Window
         menu.IsOpen = true;
     }
 
-    private void Filter_Changed(object sender, EventArgs e) => RefreshQueue();
+    private void Filter_Changed(object sender, EventArgs e)
+    {
+        if (!_isUiInitialized) return;
+        if (SearchHintText is not null)
+            SearchHintText.Visibility = string.IsNullOrEmpty(SearchTextBox?.Text)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        RefreshQueue();
+    }
 
     private void UpdateRuntimeStatusPanel()
     {
@@ -464,7 +507,9 @@ public partial class MainWindow : Window
             return;
 
         _visibleLogLines.Clear();
-        LogTextBox.Clear();
+        LogList.Items.Clear();
+        LogCountText.Text = "0 записей";
+        LogErrorBadge.Visibility = Visibility.Collapsed;
     }
 
     private void OpenLogFolderButton_Click(object sender, RoutedEventArgs e)
@@ -480,6 +525,9 @@ public partial class MainWindow : Window
 
     private void RefreshQueue()
     {
+        var ready = IsConfigurationReady();
+        ConfigurationRequiredPanel.Visibility = ready ? Visibility.Collapsed : Visibility.Visible;
+        if (!ready) EmptyQueuePanel.Visibility = Visibility.Collapsed;
         if (_database is null) return;
         try
         {
@@ -500,6 +548,7 @@ public partial class MainWindow : Window
                 (pacs is null or "Все" || item.DeliverySummary?.Contains(pacs, StringComparison.CurrentCultureIgnoreCase) == true));
             _rows.Clear();
             foreach (var item in items) _rows.Add(QueueRow.FromItem(item));
+            EmptyQueuePanel.Visibility = ready && _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         catch (Exception ex) { _logger?.Error($"Не удалось обновить очередь: {ex.Message}"); }
     }
@@ -507,8 +556,11 @@ public partial class MainWindow : Window
     private void AppendVisibleLog(string line)
     {
         _visibleLogLines.Enqueue((DateTime.Now, line));
-        LogTextBox.AppendText(line + Environment.NewLine);
-        LogTextBox.ScrollToEnd();
+        LogCountText.Text = $"{_visibleLogLines.Count} записей";
+        if (LogLineMatchesFilter(line)) AddLogLineToView(line);
+        if ((line.Contains("[ERROR]", StringComparison.Ordinal) ||
+             line.Contains("[WARN]", StringComparison.Ordinal)) && !LogExpander.IsExpanded)
+            LogErrorBadge.Visibility = Visibility.Visible;
         TrimVisibleLog();
         if (_trayIcon is not null &&
             (line.Contains("[ERROR]", StringComparison.Ordinal) ||
@@ -526,19 +578,72 @@ public partial class MainWindow : Window
         var cutoff = DateTime.Now.AddHours(-_settings.UiRetentionHours);
         var changed = false;
         while (_visibleLogLines.TryPeek(out var entry) && entry.Timestamp < cutoff) { _visibleLogLines.Dequeue(); changed = true; }
-        if (changed) LogTextBox.Text = string.Join(Environment.NewLine, _visibleLogLines.Select(x => x.Line));
+        if (changed)
+        {
+            LogCountText.Text = $"{_visibleLogLines.Count} записей";
+            RebuildLogView();
+        }
+    }
+
+    private void LogFilter_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUiInitialized) RebuildLogView();
+    }
+
+    private void LogExpander_Expanded(object sender, RoutedEventArgs e) =>
+        LogErrorBadge.Visibility = Visibility.Collapsed;
+
+    private void RebuildLogView()
+    {
+        if (LogList is null) return;
+        LogList.Items.Clear();
+        foreach (var entry in _visibleLogLines.Where(entry => LogLineMatchesFilter(entry.Line)))
+            AddLogLineToView(entry.Line, false);
+        if (LogList.Items.Count > 0) LogList.ScrollIntoView(LogList.Items[^1]);
+    }
+
+    private bool LogLineMatchesFilter(string line)
+    {
+        var filter = (LogFilterCombo?.SelectedItem as ComboBoxItem)?.Content?.ToString();
+        return filter switch
+        {
+            "Ошибки" => line.Contains("[ERROR]", StringComparison.Ordinal),
+            "Предупреждения" => line.Contains("[WARN]", StringComparison.Ordinal),
+            "Информация" => line.Contains("[INFO]", StringComparison.Ordinal),
+            _ => true
+        };
+    }
+
+    private void AddLogLineToView(string line, bool scroll = true)
+    {
+        var color = line.Contains("[ERROR]", StringComparison.Ordinal) ? "#B42318"
+            : line.Contains("[WARN]", StringComparison.Ordinal) ? "#B54708"
+            : "#344054";
+        var text = new TextBlock
+        {
+            Text = line,
+            Foreground = (System.Windows.Media.Brush)new BrushConverter().ConvertFromString(color)!,
+            TextWrapping = TextWrapping.NoWrap,
+            Padding = new Thickness(4, 2, 4, 2)
+        };
+        LogList.Items.Add(text);
+        if (scroll) LogList.ScrollIntoView(text);
     }
 
     private void InitializeTray()
     {
         try
         {
+            var iconResource = System.Windows.Application.GetResourceStream(
+                new Uri("Assets/dicommover.ico", UriKind.Relative));
+            if (iconResource is null) throw new InvalidDataException("Ресурс иконки приложения не найден.");
+            using var embeddedIcon = new System.Drawing.Icon(iconResource.Stream);
             var menu = new System.Windows.Forms.ContextMenuStrip();
             menu.Items.Add("Открыть", null, (_, _) => ShowFromTray());
             menu.Items.Add("Выход", null, (_, _) => Dispatcher.Invoke(RequestExit));
             _trayIcon = new System.Windows.Forms.NotifyIcon
             {
-                Icon = new System.Drawing.Icon(Path.Combine(AppContext.BaseDirectory, "Assets", "dicommover.ico")),
+                Icon = (System.Drawing.Icon)embeddedIcon.Clone(),
                 Text = "DicomMover",
                 Visible = true,
                 ContextMenuStrip = menu
@@ -580,6 +685,7 @@ public partial class MainWindow : Window
             Close();
             return;
         }
+        _trayIcon?.Icon?.Dispose();
         _trayIcon?.Dispose();
         SaveColumnSettings();
         try { _settingsStore.Save(_settings); } catch { }

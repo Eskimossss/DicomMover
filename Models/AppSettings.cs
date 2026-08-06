@@ -89,7 +89,13 @@ public sealed class AppSettings
 
     public void NormalizeLegacy()
     {
-        if (PacsServers.Count == 0)
+        var hasLegacyPacs = !string.IsNullOrWhiteSpace(LocalAeTitle) ||
+                            !string.IsNullOrWhiteSpace(RemoteAeTitle) ||
+                            !string.IsNullOrWhiteSpace(RemoteHost) || RemotePort != 0;
+        var hasLegacyFolder = !string.IsNullOrWhiteSpace(WatchFolder) ||
+                              SearchSubfolders || DeleteAfterSuccessfulSend;
+
+        if (PacsServers.Count == 0 && (hasLegacyPacs || hasLegacyFolder))
         {
             PacsServers.Add(new PacsSettings
             {
@@ -101,7 +107,7 @@ public sealed class AppSettings
             });
         }
 
-        if (WatchFolders.Count == 0)
+        if (WatchFolders.Count == 0 && hasLegacyFolder)
         {
             WatchFolders.Add(new WatchFolderSettings
             {

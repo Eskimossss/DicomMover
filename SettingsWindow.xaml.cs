@@ -1,5 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Globalization;
+using System.ComponentModel;
+using System.Text.Json;
 using DicomMover.Models;
 using DicomMover.Services;
 using FellowOakDicom;
@@ -13,21 +17,46 @@ using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 
 namespace DicomMover;
 
+public sealed class ZeroToEmptyConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is int number && number == 0 ? string.Empty : value?.ToString() ?? string.Empty;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        int.TryParse(value?.ToString(), out var number) ? number : 0;
+}
+
+public sealed class PacsEndpointConverter : IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+    {
+        var address = values.ElementAtOrDefault(0)?.ToString();
+        var port = values.ElementAtOrDefault(1) is int number ? number : 0;
+        return string.IsNullOrWhiteSpace(address) || port <= 0 ? "Не настроен" : $"{address}:{port}";
+    }
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
 public partial class SettingsWindow : Window
 {
     public AppSettings Result { get; private set; }
+    private readonly string _initialState;
+    private bool _saved;
 
     public SettingsWindow(AppSettings settings)
     {
         InitializeComponent();
         Result = settings.Copy();
         PopulateControls();
+        _initialState = CaptureState();
     }
 
     private void PopulateControls()
     {
         DataContext = Result;
-        PostActionColumn.ItemsSource = new[]
+        PostActionCombo.ItemsSource = new[]
         {
             new { Value = PostSendAction.Keep, Name = "Оставить" },
             new { Value = PostSendAction.Delete, Name = "Удалить" },
@@ -35,7 +64,6 @@ public partial class SettingsWindow : Window
         };
         ScanIntervalText.Text = Result.ScanIntervalSeconds.ToString();
         StableTimeText.Text = Result.FileStableSeconds.ToString();
-        RetryIntervalText.Text = Result.RetryFailedAfterSeconds.ToString();
         MaxAttemptsText.Text = Result.MaxSendAttempts.ToString();
         UiHoursText.Text = Result.UiRetentionHours.ToString();
         LogDaysText.Text = Result.LogRetentionDays.ToString();
@@ -49,11 +77,16 @@ public partial class SettingsWindow : Window
         LogPatientNamesCheck.IsChecked = Result.LogPatientNames;
         DatabaseIntegrityCheck.IsChecked = Result.EnableDatabaseIntegrityCheck;
         if (Result.WatchFolders.Count > 0) FoldersGrid.SelectedIndex = 0;
+        if (Result.PacsServers.Count > 0) PacsGrid.SelectedIndex = 0;
     }
 
     private void AddFolder_Click(object sender, RoutedEventArgs e)
     {
-        var folder = new WatchFolderSettings { Name = $"Папка {Result.WatchFolders.Count + 1}" };
+        var folder = new WatchFolderSettings
+        {
+            Name = $"Папка {Result.WatchFolders.Count + 1}",
+            Path = string.Empty
+        };
         Result.WatchFolders.Add(folder);
         RefreshFolders(folder);
     }
@@ -61,13 +94,26 @@ public partial class SettingsWindow : Window
     private void RemoveFolder_Click(object sender, RoutedEventArgs e)
     {
         if (FoldersGrid.SelectedItem is not WatchFolderSettings folder) return;
+        if (MessageBox.Show(
+                $"Удалить папку «{folder.Name}» из настроек?\n\nФайлы на диске удалены не будут.",
+                "Удаление папки",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
         Result.WatchFolders.Remove(folder);
         RefreshFolders(Result.WatchFolders.FirstOrDefault());
     }
 
     private void AddPacs_Click(object sender, RoutedEventArgs e)
     {
-        var pacs = new PacsSettings { Name = $"PACS {Result.PacsServers.Count + 1}" };
+        var pacs = new PacsSettings
+        {
+            Name = $"PACS {Result.PacsServers.Count + 1}",
+            IpAddress = string.Empty,
+            Port = 0,
+            CalledAeTitle = string.Empty,
+            CallingAeTitle = "DICOMMOVER"
+        };
         Result.PacsServers.Add(pacs);
         PacsGrid.ItemsSource = null;
         PacsGrid.ItemsSource = Result.PacsServers;
@@ -78,6 +124,12 @@ public partial class SettingsWindow : Window
     private void RemovePacs_Click(object sender, RoutedEventArgs e)
     {
         if (PacsGrid.SelectedItem is not PacsSettings pacs) return;
+        if (MessageBox.Show(
+                $"Удалить PACS «{pacs.Name}» из настроек?\n\nОн также будет удалён из назначений всех папок.",
+                "Удаление PACS",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
         Result.PacsServers.Remove(pacs);
         foreach (var folder in Result.WatchFolders) folder.PacsIds.RemoveAll(id => id == pacs.Id);
         PacsGrid.ItemsSource = null;
@@ -93,11 +145,39 @@ public partial class SettingsWindow : Window
         if (FoldersGrid.SelectedItem is not WatchFolderSettings folder) return;
         var dialog = new OpenFolderDialog();
         if (dialog.ShowDialog() != true) return;
-        if (archive) folder.ArchiveFolder = dialog.FolderName; else folder.Path = dialog.FolderName;
+        if (archive)
+        {
+            folder.ArchiveFolder = dialog.FolderName;
+            ArchiveFolderText.Text = dialog.FolderName;
+        }
+        else
+        {
+            folder.Path = dialog.FolderName;
+            FolderPathText.Text = dialog.FolderName;
+        }
         FoldersGrid.Items.Refresh();
     }
 
-    private void FoldersGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshPacsChoices();
+    private void FoldersGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        RefreshPacsChoices();
+        UpdatePostActionAvailability();
+    }
+
+    private void PostActionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        UpdatePostActionAvailability();
+
+    private void UpdatePostActionAvailability()
+    {
+        if (ArchiveFolderPanel is null || FoldersGrid?.SelectedItem is not WatchFolderSettings folder) return;
+        var action = PostActionCombo?.SelectedValue is PostSendAction selected ? selected : folder.PostSendAction;
+        var archives = action == PostSendAction.Archive;
+        var removesSource = action is PostSendAction.Archive or PostSendAction.Delete;
+        ArchiveFolderPanel.IsEnabled = archives;
+        ArchiveFolderLabel.IsEnabled = archives;
+        PreserveSubfoldersCheck.IsEnabled = archives;
+        DeleteEmptySubfoldersCheck.IsEnabled = removesSource;
+    }
 
     private void RefreshPacsChoices()
     {
@@ -131,7 +211,6 @@ public partial class SettingsWindow : Window
 
     private async void Echo_Click(object sender, RoutedEventArgs e)
     {
-        PacsGrid.CommitEdit();
         if (PacsGrid.SelectedItem is not PacsSettings pacs) return;
         try
         {
@@ -149,11 +228,10 @@ public partial class SettingsWindow : Window
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
-        FoldersGrid.CommitEdit(DataGridEditingUnit.Row, true);
-        PacsGrid.CommitEdit(DataGridEditingUnit.Row, true);
         try
         {
             ApplyControlValues();
+            _saved = true;
             DialogResult = true;
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Настройки", MessageBoxButton.OK, MessageBoxImage.Warning); }
@@ -163,7 +241,6 @@ public partial class SettingsWindow : Window
     {
         Result.ScanIntervalSeconds = Parse(ScanIntervalText.Text, "интервал проверки");
         Result.FileStableSeconds = Parse(StableTimeText.Text, "время стабильности");
-        Result.RetryFailedAfterSeconds = Parse(RetryIntervalText.Text, "интервал повтора");
         Result.MaxSendAttempts = Parse(MaxAttemptsText.Text, "количество попыток");
         Result.UiRetentionHours = Parse(UiHoursText.Text, "время истории");
         Result.LogRetentionDays = Parse(LogDaysText.Text, "срок журналов");
@@ -216,6 +293,30 @@ public partial class SettingsWindow : Window
 
     private static int Parse(string value, string name) =>
         int.TryParse(value, out var result) ? result : throw new InvalidDataException($"Некорректное значение: {name}.");
+
+    private string CaptureState() => string.Join("|",
+        JsonSerializer.Serialize(Result),
+        ScanIntervalText.Text, StableTimeText.Text, MaxAttemptsText.Text,
+        UiHoursText.Text, LogDaysText.Text, DatabaseDaysText.Text, BackupDaysText.Text,
+        StartWithWindowsCheck.IsChecked, AutoStartCheck.IsChecked,
+        StartMinimizedCheck.IsChecked, MinimizeToTrayCheck.IsChecked,
+        DetailedLogCheck.IsChecked, LogPatientNamesCheck.IsChecked,
+        DatabaseIntegrityCheck.IsChecked);
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        if (!_saved && !string.Equals(_initialState, CaptureState(), StringComparison.Ordinal) &&
+            MessageBox.Show(
+                "Закрыть настройки без сохранения изменений?",
+                "Несохранённые изменения",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            e.Cancel = true;
+            return;
+        }
+        base.OnClosing(e);
+    }
 
     private void RefreshFolders(WatchFolderSettings? selected)
     {

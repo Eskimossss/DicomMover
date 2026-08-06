@@ -1,248 +1,172 @@
 <Window x:Class="DicomMover.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="DicomMover"
-        Width="1050"
-        Height="700"
-        Icon="Assets/dicommover.ico"
-        WindowStartupLocation="CenterScreen">
-    <Grid Margin="14">
+        Title="DicomMover" Width="1180" Height="760" MinWidth="900" MinHeight="620"
+        Icon="Assets/dicommover.ico" WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackgroundBrush}" Foreground="{DynamicResource TextBrush}" FontFamily="Segoe UI" FontSize="13">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="13,7"/>
+            <Setter Property="Margin" Value="4,0"/>
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{DynamicResource PrimaryBrush}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource PrimaryBrush}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="18,9"/>
+        </Style>
+        <Style x:Key="CardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="14,11"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Padding" Value="9,6"/>
+            <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Padding" Value="7,5"/>
+            <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*" MinHeight="250"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*" MinHeight="160"/>
-            <RowDefinition Height="6"/>
-            <RowDefinition Height="200" MinHeight="90"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Padding="12" BorderBrush="#B8B8B8" BorderThickness="1" CornerRadius="6">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Orientation="Horizontal">
-                    <Image Source="Assets/dicommover-logo.png"
-                           Width="58" Height="58" Margin="0,0,12,0"/>
-                    <StackPanel VerticalAlignment="Center">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="DicomMover" FontSize="28" FontWeight="SemiBold"/>
-                            <TextBlock Text="  1.2" Foreground="#7A8491" VerticalAlignment="Bottom" Margin="0,0,0,5"/>
-                        </StackPanel>
-                        <TextBlock Text="Автоматическая отправка DICOM-файлов на PACS"/>
+        <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Image Source="Assets/dicommover-logo.png" Width="42" Height="42" Margin="0,0,11,0"/>
+                <StackPanel VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="DicomMover" FontSize="23" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}"/>
                     </StackPanel>
+                    <TextBlock Text="Автоматическая отправка DICOM-файлов на PACS" Foreground="{DynamicResource MutedBrush}"/>
                 </StackPanel>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,16,0">
+                <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,5" Width="118" Height="48" Margin="0,0,8,0">
+                    <StackPanel><TextBlock Text="В ОЧЕРЕДИ" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="PendingCountText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PendingTextBrush}"/></StackPanel>
+                </Border>
+                <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,5" Width="118" Height="48" Margin="0,0,8,0">
+                    <StackPanel><TextBlock Text="ОТПРАВЛЕНО" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="SentCountText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource SuccessTextBrush}"/></StackPanel>
+                </Border>
+                <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,5" Width="108" Height="48">
+                    <StackPanel><TextBlock Text="ОШИБКИ" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="FailedCountText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource ErrorTextBrush}"/></StackPanel>
+                </Border>
+            </StackPanel>
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border x:Name="StatusBadge" Background="{DynamicResource StatusStoppedBackgroundBrush}" CornerRadius="16" Padding="12,7" Margin="0,0,8,0">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse x:Name="StatusIndicator" Width="9" Height="9" Fill="#8A94A3" Margin="0,0,7,0"/>
+                        <TextBlock x:Name="StatusText" Text="Мониторинг остановлен" FontWeight="SemiBold"/>
+                    </StackPanel>
+                </Border>
+                <Button Content="ⓘ" Width="38" Padding="8,7" ToolTip="О программе" Click="AboutButton_Click"/>
+                <Button Content="⚙  Настройки" Click="SettingsButton_Click"/>
+            </StackPanel>
+        </Grid>
 
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Ellipse x:Name="StatusIndicator" Width="14" Height="14" Fill="Gray" Margin="0,0,8,0"/>
-                    <TextBlock x:Name="StatusText" Text="Остановлен" FontSize="16"/>
-                </StackPanel>
+        <Border Grid.Row="1" Margin="0,14,0,0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="9" Padding="14">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Очередь и история" FontSize="17" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}"/>
+                        <TextBlock x:Name="DailySummaryText" Foreground="{DynamicResource MutedBrush}" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <Button Content="↻  Повторить ошибки" Height="38" Padding="12,5" VerticalAlignment="Center" Click="RetryFailedButton_Click"/>
+                        <Button Content="Очистить историю" Height="38" Padding="12,5" VerticalAlignment="Center" Click="ClearHistoryButton_Click"/>
+                        <Button Content="Столбцы" Height="38" Padding="12,5" VerticalAlignment="Center" Click="ColumnsButton_Click"/>
+                    </StackPanel>
+                </Grid>
+                <Grid Grid.Row="1" Margin="0,14,0,10">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBlock Text="Поиск" VerticalAlignment="Center" Margin="0,0,7,0" Foreground="{DynamicResource MutedBrush}"/>
+                    <Grid Grid.Column="1">
+                        <TextBox x:Name="SearchTextBox" TextChanged="Filter_Changed" ToolTip="Поиск по ФИО, имени или пути файла, UID, модальности и тексту ошибки"/>
+                        <TextBlock x:Name="SearchHintText" Text="ФИО, имя или путь файла, UID, модальность, ошибка" Margin="11,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource PlaceholderBrush}" IsHitTestVisible="False"/>
+                    </Grid>
+                    <TextBlock Grid.Column="2" Text="Статус" VerticalAlignment="Center" Margin="14,0,6,0" Foreground="{DynamicResource MutedBrush}"/>
+                    <ComboBox Grid.Column="3" x:Name="StatusFilterCombo" Width="145" SelectedIndex="0" SelectionChanged="Filter_Changed">
+                        <ComboBoxItem Content="Все"/><ComboBoxItem Content="Ожидает"/><ComboBoxItem Content="Отправляется"/><ComboBoxItem Content="Отправлен частично"/><ComboBoxItem Content="Отправлено"/><ComboBoxItem Content="Ошибка"/>
+                    </ComboBox>
+                    <TextBlock Grid.Column="4" Text="PACS" VerticalAlignment="Center" Margin="12,0,6,0" Foreground="{DynamicResource MutedBrush}"/>
+                    <ComboBox Grid.Column="5" x:Name="PacsFilterCombo" Width="155" SelectedIndex="0" SelectionChanged="Filter_Changed"/>
+                </Grid>
+                <Grid Grid.Row="2">
+                    <DataGrid x:Name="QueueGrid" AutoGenerateColumns="False" IsReadOnly="True" MouseDoubleClick="QueueGrid_MouseDoubleClick"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="{DynamicResource GridLineBrush}"
+                              BorderThickness="0" RowHeight="38" RowBackground="{DynamicResource SurfaceBrush}" AlternatingRowBackground="{DynamicResource SurfaceAltBrush}" Background="{DynamicResource SurfaceBrush}" Foreground="{DynamicResource TextBrush}">
+                        <DataGrid.ContextMenu><ContextMenu><MenuItem Header="Подробности" Click="DetailsMenuItem_Click"/><MenuItem Header="Повторить отправку" Click="RetryItemMenuItem_Click"/><Separator/><MenuItem Header="Открыть расположение файла" Click="OpenFileLocationMenuItem_Click"/><MenuItem Header="Скопировать ошибку" Click="CopyErrorMenuItem_Click"/><MenuItem Header="Скрыть запись" Click="HideItemMenuItem_Click"/></ContextMenu></DataGrid.ContextMenu>
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="" Width="28"><DataGridTemplateColumn.CellTemplate><DataTemplate><Ellipse Width="9" Height="9" Fill="{Binding StatusColor}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                            <DataGridTextColumn x:Name="FileColumn" Header="Файл" Binding="{Binding FileName}" Width="2*"/>
+                            <DataGridTextColumn x:Name="PatientColumn" Header="ФИО" Binding="{Binding PatientName}" Width="2*"/>
+                            <DataGridTextColumn x:Name="ModalityColumn" Header="Модальность" Binding="{Binding Modality}" Width="90"/>
+                            <DataGridTextColumn x:Name="StatusColumn" Header="Статус" Binding="{Binding Status}" Width="125"/>
+                            <DataGridTextColumn x:Name="AttemptsColumn" Header="Попыток" Binding="{Binding Attempts}" Width="75"/>
+                            <DataGridTextColumn x:Name="TimeColumn" Header="Время" Binding="{Binding Time}" Width="145"/>
+                            <DataGridTextColumn x:Name="ErrorColumn" Header="Результат / ошибка" Binding="{Binding Result}" Width="3*"/>
+                            <DataGridTextColumn x:Name="PacsColumn" Header="PACS" Binding="{Binding PacsResults}" Width="2*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <Border x:Name="EmptyQueuePanel" Background="{DynamicResource SurfaceBrush}" IsHitTestVisible="False">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <TextBlock Text="✓" FontSize="30" Foreground="#94A3B8" HorizontalAlignment="Center"/>
+                            <TextBlock Text="Очередь пуста" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                            <TextBlock Text="Новые DICOM-файлы появятся здесь автоматически" Foreground="{DynamicResource MutedBrush}" Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Border x:Name="ConfigurationRequiredPanel" Background="{DynamicResource SurfaceBrush}" Visibility="Collapsed">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="460">
+                            <TextBlock Text="⚙" FontSize="30" Foreground="#2563EB" HorizontalAlignment="Center"/>
+                            <TextBlock Text="Требуется первоначальная настройка" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                            <TextBlock Text="Добавьте хотя бы одну папку и один PACS, затем назначьте PACS выбранной папке." TextAlignment="Center" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,6,0,14"/>
+                            <Button Content="Открыть настройки" Style="{StaticResource PrimaryButton}" Click="SettingsButton_Click"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </Grid>
         </Border>
 
-        <Border Grid.Row="1" Margin="0,12,0,0" Padding="10" Background="#F5F8FC" CornerRadius="5">
-            <DockPanel>
-                <Button DockPanel.Dock="Right" Content="Настройки" Padding="16,7" Click="SettingsButton_Click"/>
-                <StackPanel>
-                    <TextBlock x:Name="ConfigurationSummaryText" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                    <WrapPanel x:Name="RuntimeStatusPanel" Margin="0,6,0,0"/>
-                </StackPanel>
-            </DockPanel>
-        </Border>
+        <Expander Grid.Row="2" x:Name="LogExpander" Margin="0,12,0,0" IsExpanded="False" Expanded="LogExpander_Expanded">
+            <Expander.Header><StackPanel Orientation="Horizontal"><TextBlock Text="Журнал" FontWeight="SemiBold"/><TextBlock x:Name="LogCountText" Text="0 записей" Foreground="{DynamicResource MutedBrush}" Margin="8,0,0,0"/><Border x:Name="LogErrorBadge" Background="#DC2626" CornerRadius="9" Padding="7,1" Margin="8,0,0,0" Visibility="Collapsed"><TextBlock Text="Новая проблема" Foreground="White" FontSize="11"/></Border></StackPanel></Expander.Header>
+            <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,8,0,0">
+                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="140"/></Grid.RowDefinitions>
+                    <Grid Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal"><TextBlock Text="Показывать:" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/><ComboBox x:Name="LogFilterCombo" Width="150" Margin="8,0,0,0" SelectedIndex="0" SelectionChanged="LogFilter_Changed"><ComboBoxItem Content="Все"/><ComboBoxItem Content="Ошибки"/><ComboBoxItem Content="Предупреждения"/><ComboBoxItem Content="Информация"/></ComboBox></StackPanel><StackPanel Grid.Column="1" Orientation="Horizontal"><Button Content="Очистить" Click="ClearLogButton_Click"/><Button Content="Открыть папку" Click="OpenLogFolderButton_Click"/></StackPanel></Grid>
+                    <ListBox Grid.Row="1" x:Name="LogList" FontFamily="Consolas" FontSize="12" Background="{DynamicResource SurfaceAltBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource BorderBrush}" ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
+                </Grid>
+            </Border>
+        </Expander>
 
-       <GroupBox Grid.Row="2"
-          Margin="0,12,0,0"
-          Padding="8">
-
-   <GroupBox.Header>
-    <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
-            <ColumnDefinition Width="Auto"/>
-        </Grid.ColumnDefinitions>
-
-        <TextBlock Text="Очередь и история"
-                   VerticalAlignment="Center"
-                   FontWeight="SemiBold"/>
-
-        <StackPanel Grid.Column="1"
-                    Orientation="Horizontal">
-
-            <Button Content="Повторить отправку"
-                    Margin="12,0,4,0"
-                    Padding="10,4"
-                    Click="RetryFailedButton_Click"/>
-
-            <Button Content="Очистить историю"
-                    Margin="4,0,0,0"
-                    Padding="10,4"
-                    Click="ClearHistoryButton_Click"/>
-
-            <Button Content="Столбцы"
-                    Margin="4,0,0,0" Padding="10,4"
-                    Click="ColumnsButton_Click"/>
-
-        </StackPanel>
-    </Grid>
-</GroupBox.Header>
-
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
-        <WrapPanel Margin="0,0,0,6">
-            <TextBlock Text="Поиск:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-            <TextBox x:Name="SearchTextBox" Width="230" Margin="0,0,10,0" TextChanged="Filter_Changed"
-                     ToolTip="Поиск по файлу, ФИО, UID, модальности или ошибке."/>
-            <TextBlock Text="Статус:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-            <ComboBox x:Name="StatusFilterCombo" Width="145" SelectedIndex="0" SelectionChanged="Filter_Changed">
-                <ComboBoxItem Content="Все"/><ComboBoxItem Content="Ожидает"/><ComboBoxItem Content="Отправляется"/>
-                <ComboBoxItem Content="Отправлен частично"/><ComboBoxItem Content="Отправлено"/><ComboBoxItem Content="Ошибка"/>
-            </ComboBox>
-            <TextBlock Text="PACS:" VerticalAlignment="Center" Margin="10,0,4,0"/>
-            <ComboBox x:Name="PacsFilterCombo" Width="160" SelectedIndex="0" SelectionChanged="Filter_Changed"/>
-        </WrapPanel>
-    <DataGrid x:Name="QueueGrid" Grid.Row="1"
-              AutoGenerateColumns="False"
-              IsReadOnly="True"
-              MouseDoubleClick="QueueGrid_MouseDoubleClick">
-        <DataGrid.ContextMenu>
-            <ContextMenu>
-                <MenuItem Header="Подробности" Click="DetailsMenuItem_Click"/>
-                <MenuItem Header="Повторить отправку" Click="RetryItemMenuItem_Click"/>
-                <Separator/>
-                <MenuItem Header="Открыть расположение файла" Click="OpenFileLocationMenuItem_Click"/>
-                <MenuItem Header="Скопировать ошибку" Click="CopyErrorMenuItem_Click"/>
-                <MenuItem Header="Скрыть запись" Click="HideItemMenuItem_Click"/>
-            </ContextMenu>
-        </DataGrid.ContextMenu>
-
-        <DataGrid.Columns>
-            <DataGridTemplateColumn Header="" Width="28" IsReadOnly="True">
-                <DataGridTemplateColumn.CellTemplate>
-                    <DataTemplate>
-                        <Ellipse Width="9" Height="9" Fill="{Binding StatusColor}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-            </DataGridTemplateColumn>
-            <DataGridTextColumn x:Name="FileColumn" Header="Файл"
-                                Binding="{Binding FileName}"
-                                Width="2*"/>
-
-            <DataGridTextColumn x:Name="PatientColumn" Header="ФИО"
-                                Binding="{Binding PatientName}"
-                                Width="2*"/>
-
-            <DataGridTextColumn x:Name="ModalityColumn" Header="Модальность"
-                                Binding="{Binding Modality}"
-                                Width="90"/>
-
-            <DataGridTextColumn x:Name="StatusColumn" Header="Статус"
-                                Binding="{Binding Status}"
-                                Width="110"/>
-
-            <DataGridTextColumn x:Name="AttemptsColumn" Header="Попыток"
-                                Binding="{Binding Attempts}"
-                                Width="80"/>
-
-            <DataGridTextColumn x:Name="TimeColumn" Header="Время"
-                                Binding="{Binding Time}"
-                                Width="150"/>
-
-            <DataGridTextColumn x:Name="ErrorColumn" Header="Ошибка"
-                                Binding="{Binding Result}"
-                                Width="3*"/>
-            <DataGridTextColumn x:Name="PacsColumn" Header="PACS"
-                                Binding="{Binding PacsResults}"
-                                Width="2*"/>
-        </DataGrid.Columns>
-    </DataGrid>
-    </Grid>
-</GroupBox>
-
-        <GridSplitter Grid.Row="3"
-                      Height="6"
-                      HorizontalAlignment="Stretch"
-                      VerticalAlignment="Center"
-                      Background="#D7DCE3"
-                      ResizeDirection="Rows"
-                      ResizeBehavior="PreviousAndNext"
-                      Cursor="SizeNS"
-                      ToolTip="Перетащите, чтобы изменить высоту журнала"/>
-
-        <GroupBox Grid.Row="4"
-          Margin="0,12,0,0"
-          Padding="8">
-
-    <GroupBox.Header>
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-
-            <TextBlock Text="Журнал"
-                       VerticalAlignment="Center"
-                       FontWeight="SemiBold"/>
-
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0">
-                <Button Content="Очистить журнал" Margin="0,0,4,0" Padding="10,4" Click="ClearLogButton_Click"/>
-                <Button Content="Папка журналов" Padding="10,4" Click="OpenLogFolderButton_Click"/>
+        <Grid Grid.Row="3" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock x:Name="ConfigurationSummaryText" Text="Управление папками и PACS" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}"/>
+                <WrapPanel x:Name="RuntimeStatusPanel" Margin="0,6,0,0"/>
             </StackPanel>
-        </Grid>
-    </GroupBox.Header>
-
-    <TextBox x:Name="LogTextBox"
-             IsReadOnly="True"
-             AcceptsReturn="True"
-             FontFamily="Consolas"
-             VerticalScrollBarVisibility="Auto"
-             HorizontalScrollBarVisibility="Auto"
-             TextWrapping="NoWrap"/>
-</GroupBox>
-
-        <Grid Grid.Row="5" Margin="0,12,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="Ожидают: "/>
-                <TextBlock x:Name="PendingCountText" FontWeight="Bold" Text="0"/>
-                <TextBlock Text="   Отправлено: "/>
-                <TextBlock x:Name="SentCountText" FontWeight="Bold" Text="0"/>
-                <TextBlock Text="   Ошибки: "/>
-                <TextBlock x:Name="FailedCountText" FontWeight="Bold" Text="0"/>
-                <TextBlock x:Name="DailySummaryText" Margin="18,0,0,0" Foreground="#5B6470"/>
-            </StackPanel>
-
-            <StackPanel Grid.Column="1"
-            Orientation="Horizontal"
-            VerticalAlignment="Center">
-
-    <TextBlock Text="Мониторинг:"
-               VerticalAlignment="Center"
-               Margin="8,0"
-               FontWeight="SemiBold"/>
-
-    <Button x:Name="StartButton"
-            Content="Запустить"
-            Margin="4"
-            Padding="14,8"
-            Click="StartButton_Click"/>
-
-    <Button x:Name="StopButton"
-            Content="Остановить"
-            Margin="4"
-            Padding="14,8"
-            Click="StopButton_Click"
-            IsEnabled="False"/>
-
-</StackPanel>
+            <Button Grid.Column="1" x:Name="StartButton" Content="▶  Запустить мониторинг" Style="{StaticResource PrimaryButton}" Click="MonitorToggleButton_Click"/>
         </Grid>
     </Grid>
 </Window>

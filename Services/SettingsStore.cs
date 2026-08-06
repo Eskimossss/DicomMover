@@ -25,12 +25,7 @@ public sealed class SettingsStore
     public AppSettings Load()
     {
         if (!File.Exists(_path))
-        {
-            var defaults = new AppSettings();
-            defaults.NormalizeLegacy();
-            defaults.Validate();
-            return defaults;
-        }
+            return new AppSettings();
 
         var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path), JsonOptions)
             ?? throw new InvalidDataException("Файл настроек пуст.");
