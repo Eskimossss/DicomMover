@@ -43,8 +43,12 @@ public sealed class SettingsStoreTests
         try
         {
             var store = new SettingsStore(path);
-            var settings = new AppSettings();
-            settings.NormalizeLegacy();
+            var pacs = new PacsSettings { Id = "pacs" };
+            var settings = new AppSettings
+            {
+                PacsServers = [pacs],
+                WatchFolders = [new WatchFolderSettings { Name = "Root", Path = directory, PacsIds = [pacs.Id] }]
+            };
             store.Save(settings);
             settings.ScanIntervalSeconds = 90;
             store.Save(settings);
@@ -55,4 +59,18 @@ public sealed class SettingsStoreTests
         }
         finally { Directory.Delete(directory, true); }
     }
+
+    [Fact]
+    public void ReturnsEmptyConfigurationOnFirstRun()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "DicomMoverSettingsTests", Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "appsettings.json");
+
+        var settings = new SettingsStore(path).Load();
+
+        Assert.Empty(settings.WatchFolders);
+        Assert.Empty(settings.PacsServers);
+        Assert.False(File.Exists(path));
+    }
+
 }

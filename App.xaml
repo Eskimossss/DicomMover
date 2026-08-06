@@ -4,6 +4,22 @@
              xmlns:local="clr-namespace:DicomMover"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-         
+        <SolidColorBrush x:Key="PrimaryBrush" Color="#2563EB"/>
+        <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#F4F7FB"/>
+        <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="SurfaceAltBrush" Color="#F8FAFC"/>
+        <SolidColorBrush x:Key="InputBackgroundBrush" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="TextBrush" Color="#172033"/>
+        <SolidColorBrush x:Key="MutedBrush" Color="#667085"/>
+        <SolidColorBrush x:Key="PlaceholderBrush" Color="#98A2B3"/>
+        <SolidColorBrush x:Key="BorderBrush" Color="#E2E8F0"/>
+        <SolidColorBrush x:Key="ControlBorderBrush" Color="#CBD5E1"/>
+        <SolidColorBrush x:Key="GridLineBrush" Color="#EDF1F5"/>
+        <SolidColorBrush x:Key="SelectionBrush" Color="#DBEAFE"/>
+        <SolidColorBrush x:Key="StatusStoppedBackgroundBrush" Color="#EEF2F6"/>
+        <SolidColorBrush x:Key="StatusActiveBackgroundBrush" Color="#ECFDF5"/>
+        <SolidColorBrush x:Key="PendingTextBrush" Color="#D97706"/>
+        <SolidColorBrush x:Key="SuccessTextBrush" Color="#15803D"/>
+        <SolidColorBrush x:Key="ErrorTextBrush" Color="#DC2626"/>
     </Application.Resources>
 </Application>

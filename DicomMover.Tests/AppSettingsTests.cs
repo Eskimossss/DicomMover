@@ -62,8 +62,12 @@ public sealed class AppSettingsTests
     public void CopiesStudyDateFilterForWatchFolder()
     {
         var expected = new DateTime(2026, 8, 2);
-        var settings = new AppSettings();
-        settings.NormalizeLegacy();
+        var pacs = new PacsSettings { Id = "pacs" };
+        var settings = new AppSettings
+        {
+            PacsServers = [pacs],
+            WatchFolders = [new WatchFolderSettings { Name = "Root", Path = Path.GetTempPath(), PacsIds = [pacs.Id] }]
+        };
         settings.WatchFolders[0].SendStudiesFromDate = expected;
 
         var copy = settings.Copy();
