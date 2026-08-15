@@ -8,9 +8,9 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>Assets\dicommover.ico</ApplicationIcon>
-    <Version>1.3.0</Version>
-    <AssemblyVersion>1.3.0.0</AssemblyVersion>
-    <FileVersion>1.3.0.0</FileVersion>
+    <Version>1.4.0</Version>
+    <AssemblyVersion>1.4.0.0</AssemblyVersion>
+    <FileVersion>1.4.0.0</FileVersion>
     <DebugType Condition="'$(Configuration)' == 'Release'">None</DebugType>
     <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
   </PropertyGroup>
@@ -29,6 +29,8 @@
   <ItemGroup>
     <Compile Remove="DicomMover.Tests\**\*.cs" />
     <None Remove="DicomMover.Tests\**\*" />
+    <Compile Remove="research\**\*.cs" />
+    <None Remove="research\**\*" />
   </ItemGroup>
 
 </Project>

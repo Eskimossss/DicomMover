@@ -14,6 +14,31 @@
         <Style x:Key="LabelStyle" TargetType="TextBlock"><Setter Property="Foreground" Value="#475467"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
         <Style x:Key="HintStyle" TargetType="TextBlock"><Setter Property="Foreground" Value="#667085"/><Setter Property="FontSize" Value="12"/><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Margin" Value="0,-6,0,10"/></Style>
         <Style x:Key="Card" TargetType="Border"><Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="#E2E8F0"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="8"/><Setter Property="Padding" Value="18"/></Style>
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="#172033"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabBorder" Background="Transparent" BorderBrush="Transparent" Margin="2,2,8,4"
+                                BorderThickness="1" CornerRadius="7" Padding="13,7">
+                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="#F8FAFC"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="#EFF6FF"/>
+                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="#BFDBFE"/>
+                                <Setter Property="Panel.ZIndex" Value="10"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <DockPanel Margin="16">
@@ -24,7 +49,7 @@
             </StackPanel>
         </Border>
 
-        <TabControl Background="Transparent" BorderBrush="#D9E0EA">
+        <TabControl x:Name="SettingsTabs" Background="Transparent" BorderThickness="0">
             <TabItem Header="Папки">
                 <Grid Margin="14">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="250"/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
@@ -46,7 +71,7 @@
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="FolderPathText" Text="{Binding Path, UpdateSourceTrigger=PropertyChanged}"/><Button Grid.Column="1" Content="Выбрать…" Margin="8,3,0,10" Click="BrowseFolder_Click"/></Grid>
                             <CheckBox Content="Искать DICOM в подпапках" IsChecked="{Binding SearchSubfolders}" Margin="0,0,0,14"/>
                             <TextBlock Text="Отправлять исследования с даты" Style="{StaticResource LabelStyle}"/>
-                            <DatePicker SelectedDate="{Binding SendStudiesFromDate}" Margin="0,3,0,2"/><TextBlock Text="Используется DICOM Study Date (0008,0020). Пустое поле отключает ограничение." Style="{StaticResource HintStyle}"/>
+                            <DatePicker SelectedDate="{Binding SendStudiesFromDate}" Margin="0,3,0,2"/><TextBlock Text="Используется DICOM Study Date (0008,0020). Пустое поле отключает ограничение." Style="{StaticResource HintStyle}" Margin="0,5,0,10"/>
                             <TextBlock Text="PACS назначения" Style="{StaticResource LabelStyle}"/><ItemsControl x:Name="FolderPacsPanel" Margin="0,5,0,14"/>
                             <TextBlock Text="После успешной отправки" Style="{StaticResource LabelStyle}"/>
                             <ComboBox x:Name="PostActionCombo" SelectedValue="{Binding PostSendAction}" SelectedValuePath="Value" DisplayMemberPath="Name" SelectionChanged="PostActionCombo_SelectionChanged"/>
@@ -83,37 +108,114 @@
                 </Grid>
             </TabItem>
 
+            <TabItem Header="Кодировка">
+                <Grid Margin="14">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="250"/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource Card}" Padding="10">
+                        <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <TextBlock Text="Правила кодировки" FontSize="16" FontWeight="SemiBold" Margin="6,4,6,10"/>
+                            <ListBox Grid.Row="1" x:Name="EncodingRulesGrid" ItemsSource="{Binding EncodingRules}" SelectionChanged="EncodingRulesGrid_SelectionChanged" BorderThickness="0">
+                                <ListBox.ItemTemplate><DataTemplate><StackPanel Margin="7"><TextBlock Text="{Binding Name}" FontWeight="SemiBold"/><TextBlock Text="Отключено" Foreground="#B42318"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding Enabled}" Value="False"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></StackPanel></DataTemplate></ListBox.ItemTemplate>
+                            </ListBox>
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="2,10,2,2"><Button Content="＋ Добавить" Click="AddEncodingRule_Click"/><Button Content="Удалить" Click="RemoveEncodingRule_Click"/></StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="2" Style="{StaticResource Card}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
+                            <TextBlock Text="Обработка DICOM-текста" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                            <TextBlock Text="Правило применяется только к выбранной связке папки и PACS. Исходный DICOM никогда не изменяется." Style="{StaticResource HintStyle}" Margin="0,0,0,14"/>
+                            <CheckBox Content="Правило включено" IsChecked="{Binding SelectedItem.Enabled, ElementName=EncodingRulesGrid}" Margin="0,0,0,10"/>
+                            <Grid x:Name="EncodingRuleEditor" DataContext="{Binding SelectedItem, ElementName=EncodingRulesGrid}">
+                                <StackPanel>
+                                    <TextBlock Text="Название" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <StackPanel><TextBlock Text="Исходная папка" Style="{StaticResource LabelStyle}"/><ComboBox x:Name="EncodingFolderCombo" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding SourceFolderId, Mode=TwoWay}"/></StackPanel>
+                                        <StackPanel Grid.Column="2"><TextBlock Text="PACS назначения" Style="{StaticResource LabelStyle}"/><ComboBox x:Name="EncodingPacsCombo" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding DestinationPacsId, Mode=TwoWay}"/></StackPanel>
+                                    </Grid>
+                                    <StackPanel x:Name="RepairFieldsPanel" Margin="0,4,0,0">
+                                        <TextBlock Text="Поля для исправления" Style="{StaticResource LabelStyle}"/>
+                                        <TextBlock Text="По умолчанию исправляется только ФИО пациента. Добавляйте остальные поля после диагностики." Style="{StaticResource HintStyle}" Margin="0,0,0,6"/>
+                                        <WrapPanel>
+                                            <CheckBox x:Name="PatientNameFieldCheck" Tag="00100010" Content="Patient Name (0010,0010)" Checked="TextFieldCheck_Changed" Unchecked="TextFieldCheck_Changed" Margin="0,0,18,7"/>
+                                            <CheckBox x:Name="ProtocolNameFieldCheck" Tag="00181030" Content="Protocol Name (0018,1030)" Checked="TextFieldCheck_Changed" Unchecked="TextFieldCheck_Changed" Margin="0,0,18,7"/>
+                                            <CheckBox x:Name="InstitutionNameFieldCheck" Tag="00080080" Content="Institution Name (0008,0080)" Checked="TextFieldCheck_Changed" Unchecked="TextFieldCheck_Changed" Margin="0,0,18,7"/>
+                                            <CheckBox x:Name="StudyDescriptionFieldCheck" Tag="00081030" Content="Study Description (0008,1030)" Checked="TextFieldCheck_Changed" Unchecked="TextFieldCheck_Changed" Margin="0,0,18,7"/>
+                                        </WrapPanel>
+                                        <Expander Header="Дополнительные поля" Margin="0,2,0,0">
+                                            <WrapPanel Margin="12,7,0,0">
+                                                <CheckBox x:Name="SeriesDescriptionFieldCheck" Tag="0008103E" Content="Series Description (0008,103E)" Checked="TextFieldCheck_Changed" Unchecked="TextFieldCheck_Changed" Margin="0,0,18,7"/>
+                                                <CheckBox x:Name="ReferringPhysicianFieldCheck" Tag="00080090" Content="Referring Physician's Name (0008,0090)" Checked="TextFieldCheck_Changed" Unchecked="TextFieldCheck_Changed" Margin="0,0,18,7"/>
+                                                <CheckBox x:Name="PerformingPhysicianFieldCheck" Tag="00081050" Content="Performing Physician's Name (0008,1050)" Checked="TextFieldCheck_Changed" Unchecked="TextFieldCheck_Changed" Margin="0,0,18,7"/>
+                                                <CheckBox x:Name="ReadingPhysicianFieldCheck" Tag="00081060" Content="Name of Physician(s) Reading Study (0008,1060)" Checked="TextFieldCheck_Changed" Unchecked="TextFieldCheck_Changed" Margin="0,0,18,7"/>
+                                                <CheckBox x:Name="OperatorsNameFieldCheck" Tag="00081070" Content="Operators' Name (0008,1070)" Checked="TextFieldCheck_Changed" Unchecked="TextFieldCheck_Changed" Margin="0,0,18,7"/>
+                                                <CheckBox x:Name="PatientIdFieldCheck" Tag="00100020" Content="Patient ID (0010,0020)" Checked="TextFieldCheck_Changed" Unchecked="TextFieldCheck_Changed" Margin="0,0,18,7"/>
+                                                <CheckBox x:Name="AllTextFieldsCheck" Content="Все текстовые поля" Checked="AllTextFieldsCheck_Changed" Unchecked="AllTextFieldsCheck_Changed" Margin="0,0,18,7"/>
+                                            </WrapPanel>
+                                        </Expander>
+                                    </StackPanel>
+                                    <StackPanel x:Name="TargetEncodingPanel" Margin="0,5,0,0">
+                                        <TextBlock Text="Кодировка при отправке на PACS" Style="{StaticResource LabelStyle}"/>
+                                        <ComboBox x:Name="RepairTargetEncodingCombo" SelectedValuePath="Value" DisplayMemberPath="Name" SelectedValue="{Binding TargetEncoding, Mode=TwoWay}"/>
+                                        <TextBlock Text="Определяет, в какой стандартной DICOM-кодировке исправленный текст будет передан на PACS." Style="{StaticResource HintStyle}"/>
+                                    </StackPanel>
+                                    <Expander x:Name="LegacyEncodingPanel" Header="Расширенные настройки" Margin="0,8,0,0" IsExpanded="False">
+                                        <StackPanel Margin="12,8,0,0">
+                                            <TextBlock Text="Определение исходной кодировки" Style="{StaticResource LabelStyle}"/>
+                                            <ComboBox x:Name="SourceEncodingCombo" SelectedValuePath="Value" DisplayMemberPath="Name" SelectedValue="{Binding SourceEncodingMode, Mode=TwoWay}" SelectionChanged="SourceEncodingCombo_SelectionChanged"/>
+                                            <TextBlock Text="Автоматический режим анализирует исходные байты каждого элемента. Принудительный режим используйте только после ручной проверки через «Проверить преобразование»." Style="{StaticResource HintStyle}"/>
+                                        </StackPanel>
+                                    </Expander>
+                                </StackPanel>
+                            </Grid>
+                            <Separator Margin="0,8,0,12"/>
+                            <TextBlock Text="Диагностика DICOM-текста" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <WrapPanel Margin="0,0,0,10">
+                                <Button Content="Проверить папку" Click="DiagnoseFolder_Click" Background="#2563EB" Foreground="White"/>
+                                <Button x:Name="ApplyRecommendationButton" Content="Применить рекомендацию" Click="ApplyRecommendation_Click" IsEnabled="False"/>
+                                <Button Content="Проверить преобразование" Click="PreviewConversion_Click"/>
+                            </WrapPanel>
+                            <Border x:Name="RequiredFieldsPanel" Background="#FFF7ED" BorderBrush="#FDBA74" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,8" Visibility="Collapsed">
+                                <StackPanel><TextBlock Text="Необходимые дополнительные поля" FontWeight="SemiBold"/><TextBlock x:Name="RequiredFieldsText" TextWrapping="Wrap" Margin="0,4,0,6"/><Button Content="Добавить необходимые поля" HorizontalAlignment="Left" Click="AddRequiredFields_Click"/></StackPanel>
+                            </Border>
+                            <TextBlock x:Name="LastDiagnosticText" Foreground="#667085" Margin="2,2,0,0" Visibility="Collapsed"/>
+                        </StackPanel></ScrollViewer>
+                    </Border>
+                </Grid>
+            </TabItem>
+
             <TabItem Header="Мониторинг"><Border Style="{StaticResource Card}" Margin="14" MaxWidth="680" HorizontalAlignment="Left"><StackPanel>
-                <TextBlock Text="Мониторинг и отправка" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,18"/>
                 <TextBlock Text="Интервал проверки папок" Style="{StaticResource LabelStyle}"/><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition/></Grid.ColumnDefinitions><TextBox x:Name="ScanIntervalText"/><TextBlock Grid.Column="1" Text="секунд" VerticalAlignment="Center" Margin="8,-7,0,0"/></Grid><TextBlock Text="Как часто проверять наблюдаемые папки на новые файлы." Style="{StaticResource HintStyle}"/>
+                <TextBlock Text="Интервал проверки PACS" Style="{StaticResource LabelStyle}"/><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition/></Grid.ColumnDefinitions><TextBox x:Name="PacsHealthCheckText"/><TextBlock Grid.Column="1" Text="секунд" VerticalAlignment="Center" Margin="8,-7,0,0"/></Grid><TextBlock Text="Как часто выполнять C-ECHO для включённых PACS. Работает независимо от проверки папок; первая проверка выполняется сразу после запуска мониторинга. Допустимо от 10 до 3600 секунд." Style="{StaticResource HintStyle}"/>
                 <TextBlock Text="Время стабильности файла" Style="{StaticResource LabelStyle}"/><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition/></Grid.ColumnDefinitions><TextBox x:Name="StableTimeText"/><TextBlock Grid.Column="1" Text="секунд" VerticalAlignment="Center" Margin="8,-7,0,0"/></Grid><TextBlock Text="Файл обрабатывается только после того, как его перестали изменять." Style="{StaticResource HintStyle}"/>
                 <TextBlock Text="Максимум ошибок C-STORE" Style="{StaticResource LabelStyle}"/><TextBox x:Name="MaxAttemptsText" Width="140" HorizontalAlignment="Left"/><TextBlock Text="После достижения лимита автоматические повторы прекращаются. Недоступность сети или PACS этот лимит не расходует." Style="{StaticResource HintStyle}"/>
             </StackPanel></Border></TabItem>
 
             <TabItem Header="Журнал"><Border Style="{StaticResource Card}" Margin="14" MaxWidth="700" HorizontalAlignment="Left"><StackPanel>
-                <TextBlock Text="Журнал приложения" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,18"/>
-                <CheckBox x:Name="DetailedLogCheck" Content="Подробный журнал сканирования" Margin="0,0,0,10"/>
+                <CheckBox x:Name="DetailedLogCheck" Content="Расширенная диагностика мониторинга" Margin="0,0,0,2"/>
+                <TextBlock Text="Добавляет итог каждого сканирования папки и результат каждого C-ECHO: количество обработанных файлов, ошибки доступа, доступность PACS и длительность проверок." Style="{StaticResource HintStyle}" Margin="20,0,0,12"/>
                 <CheckBox x:Name="LogPatientNamesCheck" Content="Записывать ФИО пациентов в журнал" Margin="0,0,0,4"/>
                 <TextBlock Text="ФИО является персональной информацией. Включайте этот параметр только при необходимости." Foreground="#B54708" FontSize="12" Margin="20,0,0,18"/>
                 <TextBlock Text="Хранить дневные файлы журнала" Style="{StaticResource LabelStyle}"/><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition/></Grid.ColumnDefinitions><TextBox x:Name="LogDaysText"/><TextBlock Grid.Column="1" Text="дней" VerticalAlignment="Center" Margin="8,-7,0,0"/></Grid>
-                <TextBlock Text="На главном экране журнал можно фильтровать по уровню. На диске сохраняется один общий ежедневный файл." Style="{StaticResource HintStyle}"/>
+                <TextBlock Text="На главном экране можно отдельно показывать ошибки, предупреждения или информационные сообщения. На диске сохраняется один общий ежедневный файл." Style="{StaticResource HintStyle}"/>
             </StackPanel></Border></TabItem>
 
-            <TabItem Header="Хранение"><Border Style="{StaticResource Card}" Margin="14" MaxWidth="700" HorizontalAlignment="Left"><StackPanel>
-                <TextBlock Text="История и резервные копии" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,18"/>
+            <TabItem Header="История и хранение"><Border Style="{StaticResource Card}" Margin="14" MaxWidth="700" HorizontalAlignment="Left"><StackPanel>
                 <TextBlock Text="Показывать успешные записи" Style="{StaticResource LabelStyle}"/><TextBox x:Name="UiHoursText" Width="140" HorizontalAlignment="Left"/><TextBlock Text="Количество часов, после которого успешные записи скрываются из основной таблицы." Style="{StaticResource HintStyle}"/>
                 <TextBlock Text="Хранить историю SQLite, дней" Style="{StaticResource LabelStyle}"/><TextBox x:Name="DatabaseDaysText" Width="140" HorizontalAlignment="Left"/>
+                <TextBlock Text="После указанного срока из базы удаляются подробные записи об отправленных и скрытых файлах. Реестр SOP Instance UID сохраняется для защиты от повторной отправки." Style="{StaticResource HintStyle}"/>
                 <TextBlock Text="Хранить резервные копии, дней" Style="{StaticResource LabelStyle}"/><TextBox x:Name="BackupDaysText" Width="140" HorizontalAlignment="Left"/>
-                <CheckBox x:Name="DatabaseIntegrityCheck" Content="Еженедельно проверять целостность SQLite" Margin="0,4,0,16"/>
+                <TextBlock Text="При запуске автоматически создаётся одна копия SQLite за текущий день. Копии старше указанного срока удаляются." Style="{StaticResource HintStyle}"/>
+                <CheckBox x:Name="DatabaseIntegrityCheck" Content="Еженедельно проверять целостность SQLite" Margin="0,4,0,2"/>
+                <TextBlock Text="Не чаще одного раза в семь дней при запуске выполняется проверка целостности базы и внутренняя оптимизация SQLite." Style="{StaticResource HintStyle}" Margin="20,0,0,16"/>
                 <WrapPanel><Button Content="Создать копию SQLite" Click="BackupDatabase_Click"/><Button Content="Экспортировать настройки" Click="ExportSettings_Click"/><Button Content="Импортировать настройки" Click="ImportSettings_Click"/></WrapPanel>
             </StackPanel></Border></TabItem>
 
             <TabItem Header="Запуск и интерфейс"><Border Style="{StaticResource Card}" Margin="14" MaxWidth="700" HorizontalAlignment="Left"><StackPanel>
                 <TextBlock Text="Запуск и поведение окна" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,18"/>
                 <CheckBox x:Name="StartWithWindowsCheck" Content="Запускать вместе с Windows" Margin="0,0,0,10"/>
-                <CheckBox x:Name="AutoStartCheck" Content="Автоматически начинать мониторинг" Margin="0,0,0,10"/>
+                <CheckBox x:Name="AutoStartCheck" Content="Автоматически начинать мониторинг после запуска" Margin="0,0,0,10"/>
                 <CheckBox x:Name="StartMinimizedCheck" Content="Запускать свёрнутым" Margin="0,0,0,10"/>
-                <CheckBox x:Name="MinimizeToTrayCheck" Content="Сворачивать в системный трей"/>
+                <CheckBox x:Name="MinimizeToTrayCheck" Content="Сворачивать в системный трей при закрытии"/>
             </StackPanel></Border></TabItem>
         </TabControl>
     </DockPanel>

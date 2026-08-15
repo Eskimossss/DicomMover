@@ -1,0 +1,51 @@
+<Window x:Class="DicomMover.DicomTextDiagnosticWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Диагностика DICOM-текста" Width="1180" Height="680" MinWidth="850" MinHeight="480"
+        Icon="Assets/dicommover.ico" WindowStartupLocation="CenterOwner" Background="#F4F7FB" FontFamily="Segoe UI" FontSize="13">
+    <Window.Resources>
+        <Style TargetType="Button"><Setter Property="Padding" Value="13,7"/><Setter Property="Margin" Value="4,0"/><Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="#CBD5E1"/></Style>
+        <Style x:Key="CellText" TargetType="TextBlock"><Setter Property="Padding" Value="5,3"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/></Style>
+    </Window.Resources>
+    <DockPanel Margin="14">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button x:Name="DetailsButton" Content="Подробности" Click="Details_Click" IsEnabled="False"/>
+            <Button Content="Закрыть" IsCancel="True" Padding="18,7"/>
+        </StackPanel>
+        <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
+            <Grid Margin="0,0,0,10">
+                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock x:Name="FolderSummaryText" FontWeight="SemiBold" Foreground="#475467" Margin="2,0,16,0" VerticalAlignment="Center"/>
+                <CheckBox x:Name="IgnoreEmptyCheck" Grid.Column="1" Content="Игнорировать пустые" IsChecked="True"
+                          VerticalAlignment="Center" Checked="IgnoreEmptyCheck_Changed" Unchecked="IgnoreEmptyCheck_Changed"/>
+            </Grid>
+            <Grid Grid.Row="1" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="300"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="170"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
+                <TextBlock Text="Файл:" VerticalAlignment="Center" FontWeight="SemiBold" Margin="2,0,8,0"/>
+                <ComboBox x:Name="FileCombo" Grid.Column="1" DisplayMemberPath="FileName" SelectionChanged="FileCombo_SelectionChanged" Padding="7,5"/>
+                <Button Grid.Column="2" Content="Предыдущий" Click="Previous_Click"/>
+                <TextBlock x:Name="PositionText" Grid.Column="3" VerticalAlignment="Center" MinWidth="65" TextAlignment="Center"/>
+                <Button Grid.Column="4" Content="Следующий" Click="Next_Click"/>
+                <TextBlock Grid.Column="5" Text="Файлы:" VerticalAlignment="Center" Margin="14,0,6,0"/>
+                <ComboBox x:Name="FileFilterCombo" Grid.Column="6" SelectionChanged="FileFilter_SelectionChanged" Padding="7,5"/>
+                <TextBlock Grid.Column="7" Text="Элементы:" VerticalAlignment="Center" Margin="14,0,6,0"/>
+                <ComboBox x:Name="ElementFilterCombo" Grid.Column="8" SelectionChanged="ElementFilter_SelectionChanged" Padding="7,5"/>
+            </Grid>
+            <TextBlock x:Name="FileSummaryText" Grid.Row="2" Foreground="#667085" Margin="2,0,0,8"/>
+            <DataGrid x:Name="ElementsGrid" Grid.Row="3" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
+                      EnableRowVirtualization="True" EnableColumnVirtualization="True" HeadersVisibility="Column"
+                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" ClipboardCopyMode="IncludeHeader"
+                      SelectionChanged="ElementsGrid_SelectionChanged" MouseDoubleClick="ElementsGrid_MouseDoubleClick">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Тег" Binding="{Binding Tag}" Width="105" ElementStyle="{StaticResource CellText}"/>
+                    <DataGridTextColumn Header="Название" Binding="{Binding Name}" Width="190" ElementStyle="{StaticResource CellText}"/>
+                    <DataGridTextColumn Header="Исходное значение" Binding="{Binding SourceValue}" Width="2*" ElementStyle="{StaticResource CellText}"/>
+                    <DataGridTextColumn Header="Исходная кодировка" Binding="{Binding SourceEncoding}" Width="175" ElementStyle="{StaticResource CellText}"/>
+                    <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="130" ElementStyle="{StaticResource CellText}"/>
+                    <DataGridTextColumn Header="Комментарий" Binding="{Binding Comment}" Width="2*" ElementStyle="{StaticResource CellText}"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+    </DockPanel>
+</Window>

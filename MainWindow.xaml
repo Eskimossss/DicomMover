@@ -41,39 +41,83 @@
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/>
         </Style>
+        <Style TargetType="DataGridCell">
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="4,0"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="4,0"/>
+        </Style>
+        <Style x:Key="CenteredDataGridText" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        </Style>
+        <Style x:Key="MainTabItemStyle" TargetType="TabItem">
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabBorder" Background="Transparent" BorderBrush="Transparent" Margin="2,2,8,4"
+                                BorderThickness="1" CornerRadius="7" Padding="13,7">
+                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource SurfaceAltBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="#EFF6FF"/>
+                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="#BFDBFE"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                                <Setter Property="Panel.ZIndex" Value="10"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="MainNavigationButtonStyle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="NavigationBorder" Background="Transparent" BorderBrush="Transparent"
+                                BorderThickness="1" CornerRadius="7" Padding="13,8">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="NavigationBorder" Property="Background" Value="{DynamicResource SurfaceAltBrush}"/></Trigger>
+                            <Trigger Property="IsChecked" Value="True"><Setter TargetName="NavigationBorder" Property="Background" Value="#EFF6FF"/><Setter TargetName="NavigationBorder" Property="BorderBrush" Value="#BFDBFE"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
-    <Grid Margin="20">
+    <Grid x:Name="RootLayout" Margin="20,12,20,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*" MinHeight="250"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition x:Name="MainContentRow" Height="*" MinHeight="250"/>
+            <RowDefinition Height="6"/>
+            <RowDefinition x:Name="JournalRow" Height="Auto" MinHeight="0"/>
+            <RowDefinition x:Name="FooterRow" Height="Auto" MinHeight="58"/>
         </Grid.RowDefinitions>
 
         <Grid>
-            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <Image Source="Assets/dicommover-logo.png" Width="42" Height="42" Margin="0,0,11,0"/>
-                <StackPanel VerticalAlignment="Center">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="DicomMover" FontSize="23" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}"/>
-                    </StackPanel>
-                    <TextBlock Text="Автоматическая отправка DICOM-файлов на PACS" Foreground="{DynamicResource MutedBrush}"/>
-                </StackPanel>
+                <TextBlock Text="DicomMover" FontSize="23" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
             </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,16,0">
-                <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,5" Width="118" Height="48" Margin="0,0,8,0">
-                    <StackPanel><TextBlock Text="В ОЧЕРЕДИ" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="PendingCountText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource PendingTextBrush}"/></StackPanel>
-                </Border>
-                <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,5" Width="118" Height="48" Margin="0,0,8,0">
-                    <StackPanel><TextBlock Text="ОТПРАВЛЕНО" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="SentCountText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource SuccessTextBrush}"/></StackPanel>
-                </Border>
-                <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,5" Width="108" Height="48">
-                    <StackPanel><TextBlock Text="ОШИБКИ" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="FailedCountText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource ErrorTextBrush}"/></StackPanel>
-                </Border>
-            </StackPanel>
-            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <Border x:Name="StatusBadge" Background="{DynamicResource StatusStoppedBackgroundBrush}" CornerRadius="16" Padding="12,7" Margin="0,0,8,0">
                     <StackPanel Orientation="Horizontal">
                         <Ellipse x:Name="StatusIndicator" Width="9" Height="9" Fill="#8A94A3" Margin="0,0,7,0"/>
@@ -85,22 +129,42 @@
             </StackPanel>
         </Grid>
 
-        <Border Grid.Row="1" Margin="0,14,0,0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="9" Padding="14">
+        <Border Grid.Row="1" Margin="0,10,0,0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="9" Padding="14">
             <Grid>
-                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                <Grid>
-                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <StackPanel>
-                        <TextBlock Text="Очередь и история" FontSize="17" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}"/>
-                        <TextBlock x:Name="DailySummaryText" Foreground="{DynamicResource MutedBrush}" Margin="0,2,0,0"/>
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal">
-                        <Button Content="↻  Повторить ошибки" Height="38" Padding="12,5" VerticalAlignment="Center" Click="RetryFailedButton_Click"/>
-                        <Button Content="Очистить историю" Height="38" Padding="12,5" VerticalAlignment="Center" Click="ClearHistoryButton_Click"/>
-                        <Button Content="Столбцы" Height="38" Padding="12,5" VerticalAlignment="Center" Click="ColumnsButton_Click"/>
-                    </StackPanel>
-                </Grid>
-                <Grid Grid.Row="1" Margin="0,14,0,10">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal">
+                    <RadioButton x:Name="QueueNavigationButton" GroupName="MainNavigation" IsChecked="True" Content="Очередь и история" Style="{StaticResource MainNavigationButtonStyle}" Click="QueueNavigationButton_Click"/>
+                    <RadioButton x:Name="ProblemsNavigationButton" GroupName="MainNavigation" Style="{StaticResource MainNavigationButtonStyle}" Click="ProblemsNavigationButton_Click">
+                        <StackPanel Orientation="Horizontal"><TextBlock Text="Активные проблемы"/><Border x:Name="ProblemBadge" Background="#DC2626" CornerRadius="9" Padding="6,0" Margin="7,0,0,0" Visibility="Collapsed"><TextBlock x:Name="ProblemCountText" Text="0" Foreground="White" FontSize="11"/></Border></StackPanel>
+                    </RadioButton>
+                </StackPanel>
+                <TextBlock Grid.Column="1" x:Name="ProblemsSummaryText" Text="Здесь собраны активные проблемы, требующие внимания оператора." Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="12,0" Visibility="Collapsed"/>
+                <StackPanel Grid.Column="2" x:Name="QueueTabActionsPanel" Orientation="Horizontal">
+                    <Button Content="↻  Повторить ошибки" Height="38" Padding="12,5" VerticalAlignment="Center" Click="RetryFailedButton_Click"/>
+                    <Button Content="Очистить историю" Height="38" Padding="12,5" VerticalAlignment="Center" Click="ClearHistoryButton_Click"/>
+                    <Button Content="Сводка" Height="38" Padding="12,5" VerticalAlignment="Center" Click="SummaryButton_Click"/>
+                    <Button Content="Столбцы" Height="38" Padding="12,5" VerticalAlignment="Center" Click="ColumnsButton_Click"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" x:Name="ProblemsTabActionsPanel" Orientation="Horizontal" Visibility="Collapsed">
+                    <Button Content="Очистить список проблем" Height="38" Padding="12,5" Click="ClearProblemsButton_Click"/>
+                </StackPanel>
+            </Grid>
+            <TabControl Grid.Row="1" x:Name="MainTabControl" SelectedIndex="0" BorderThickness="0" Background="{DynamicResource SurfaceBrush}" SelectionChanged="MainTabControl_SelectionChanged">
+            <TabControl.Template>
+                <ControlTemplate TargetType="TabControl">
+                    <ContentPresenter x:Name="PART_SelectedContentHost"
+                                      Content="{TemplateBinding SelectedContent}"
+                                      ContentTemplate="{TemplateBinding SelectedContentTemplate}"
+                                      ContentStringFormat="{TemplateBinding SelectedContentStringFormat}"
+                                      SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                </ControlTemplate>
+            </TabControl.Template>
+            <TabItem Header="Очередь и история" FontWeight="Normal">
+            <Grid Margin="0,10,0,0">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <Grid Margin="0,0,0,10">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <TextBlock Text="Поиск" VerticalAlignment="Center" Margin="0,0,7,0" Foreground="{DynamicResource MutedBrush}"/>
                     <Grid Grid.Column="1">
@@ -114,21 +178,22 @@
                     <TextBlock Grid.Column="4" Text="PACS" VerticalAlignment="Center" Margin="12,0,6,0" Foreground="{DynamicResource MutedBrush}"/>
                     <ComboBox Grid.Column="5" x:Name="PacsFilterCombo" Width="155" SelectedIndex="0" SelectionChanged="Filter_Changed"/>
                 </Grid>
-                <Grid Grid.Row="2">
-                    <DataGrid x:Name="QueueGrid" AutoGenerateColumns="False" IsReadOnly="True" MouseDoubleClick="QueueGrid_MouseDoubleClick"
+                <Grid Grid.Row="1">
+                    <DataGrid x:Name="QueueGrid" AutoGenerateColumns="False" IsReadOnly="True" MouseDoubleClick="QueueGrid_MouseDoubleClick" PreviewMouseRightButtonDown="DataGrid_PreviewMouseRightButtonDown"
                               HeadersVisibility="Column" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="{DynamicResource GridLineBrush}"
                               BorderThickness="0" RowHeight="38" RowBackground="{DynamicResource SurfaceBrush}" AlternatingRowBackground="{DynamicResource SurfaceAltBrush}" Background="{DynamicResource SurfaceBrush}" Foreground="{DynamicResource TextBrush}">
                         <DataGrid.ContextMenu><ContextMenu><MenuItem Header="Подробности" Click="DetailsMenuItem_Click"/><MenuItem Header="Повторить отправку" Click="RetryItemMenuItem_Click"/><Separator/><MenuItem Header="Открыть расположение файла" Click="OpenFileLocationMenuItem_Click"/><MenuItem Header="Скопировать ошибку" Click="CopyErrorMenuItem_Click"/><MenuItem Header="Скрыть запись" Click="HideItemMenuItem_Click"/></ContextMenu></DataGrid.ContextMenu>
                         <DataGrid.Columns>
-                            <DataGridTemplateColumn Header="" Width="28"><DataGridTemplateColumn.CellTemplate><DataTemplate><Ellipse Width="9" Height="9" Fill="{Binding StatusColor}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
-                            <DataGridTextColumn x:Name="FileColumn" Header="Файл" Binding="{Binding FileName}" Width="2*"/>
-                            <DataGridTextColumn x:Name="PatientColumn" Header="ФИО" Binding="{Binding PatientName}" Width="2*"/>
-                            <DataGridTextColumn x:Name="ModalityColumn" Header="Модальность" Binding="{Binding Modality}" Width="90"/>
-                            <DataGridTextColumn x:Name="StatusColumn" Header="Статус" Binding="{Binding Status}" Width="125"/>
-                            <DataGridTextColumn x:Name="AttemptsColumn" Header="Попыток" Binding="{Binding Attempts}" Width="75"/>
-                            <DataGridTextColumn x:Name="TimeColumn" Header="Время" Binding="{Binding Time}" Width="145"/>
-                            <DataGridTextColumn x:Name="ErrorColumn" Header="Результат / ошибка" Binding="{Binding Result}" Width="3*"/>
-                            <DataGridTextColumn x:Name="PacsColumn" Header="PACS" Binding="{Binding PacsResults}" Width="2*"/>
+                            <DataGridTemplateColumn Header="" Width="28"><DataGridTemplateColumn.CellTemplate><DataTemplate><Ellipse Width="9" Height="9" Fill="{Binding StatusColor}" HorizontalAlignment="Center" VerticalAlignment="Center"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                            <DataGridTextColumn x:Name="NumberColumn" Header="№" Binding="{Binding RowNumber}" Width="45" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                            <DataGridTextColumn x:Name="FileColumn" Header="Файл" Binding="{Binding FileName}" Width="2*" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                            <DataGridTextColumn x:Name="PatientColumn" Header="ФИО" Binding="{Binding PatientName}" Width="2*" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                            <DataGridTextColumn x:Name="ModalityColumn" Header="Модальность" Binding="{Binding Modality}" Width="90" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                            <DataGridTextColumn x:Name="StatusColumn" Header="Статус" Binding="{Binding Status}" Width="125" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                            <DataGridTextColumn x:Name="AttemptsColumn" Header="Попыток" Binding="{Binding Attempts}" Width="75" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                            <DataGridTextColumn x:Name="TimeColumn" Header="Время" Binding="{Binding Time}" Width="145" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                            <DataGridTextColumn x:Name="ErrorColumn" Header="Результат / ошибка" Binding="{Binding Result}" Width="3*" ElementStyle="{StaticResource CenteredDataGridText}"/>
+                            <DataGridTextColumn x:Name="PacsColumn" Header="PACS" Binding="{Binding PacsResults}" Width="2*" ElementStyle="{StaticResource CenteredDataGridText}"/>
                         </DataGrid.Columns>
                     </DataGrid>
                     <Border x:Name="EmptyQueuePanel" Background="{DynamicResource SurfaceBrush}" IsHitTestVisible="False">
@@ -148,19 +213,59 @@
                     </Border>
                 </Grid>
             </Grid>
+            </TabItem>
+            <TabItem Header="Активные проблемы" FontWeight="Normal">
+                <Grid Margin="0,10,0,0">
+                    <DataGrid x:Name="ProblemsGrid" AutoGenerateColumns="False" IsReadOnly="True" MouseDoubleClick="ProblemsGrid_MouseDoubleClick" PreviewMouseRightButtonDown="DataGrid_PreviewMouseRightButtonDown"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="{DynamicResource GridLineBrush}"
+                              BorderThickness="0" RowHeight="38" RowBackground="{DynamicResource SurfaceBrush}"
+                              AlternatingRowBackground="{DynamicResource SurfaceAltBrush}" Background="{DynamicResource SurfaceBrush}" Foreground="{DynamicResource TextBrush}">
+                        <DataGrid.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Выполнить рекомендуемое действие" Click="ProblemActionMenuItem_Click"/>
+                                <MenuItem Header="Подробности исследования" Click="ProblemDetailsMenuItem_Click"/>
+                                <MenuItem Header="Повторить отправку" Click="ProblemRetryMenuItem_Click"/>
+                                <MenuItem Header="Открыть расположение" Click="ProblemOpenLocationMenuItem_Click"/>
+                                <MenuItem Header="Открыть настройки" Click="SettingsButton_Click"/>
+                                <Separator/>
+                                <MenuItem Header="Убрать из списка" Click="ResolveProblemMenuItem_Click"/>
+                            </ContextMenu>
+                        </DataGrid.ContextMenu>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Тип" Binding="{Binding Type}" Width="145"/>
+                            <DataGridTextColumn Header="Объект" Binding="{Binding ObjectName}" Width="2*"/>
+                            <DataGridTextColumn Header="Возникла" Binding="{Binding Time}" Width="145"/>
+                            <DataGridTextColumn Header="Причина" Binding="{Binding Details}" Width="3*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <Border x:Name="EmptyProblemsPanel" Background="{DynamicResource SurfaceBrush}" IsHitTestVisible="False">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <TextBlock Text="✓" FontSize="30" Foreground="#55A868" HorizontalAlignment="Center"/>
+                            <TextBlock Text="Активных проблем нет" FontSize="16" FontWeight="SemiBold" Margin="0,6,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+            </TabControl>
+            </Grid>
         </Border>
 
-        <Expander Grid.Row="2" x:Name="LogExpander" Margin="0,12,0,0" IsExpanded="False" Expanded="LogExpander_Expanded">
+        <GridSplitter Grid.Row="2" Height="6" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                      Background="Transparent" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"
+                      DragCompleted="JournalSplitter_DragCompleted"/>
+
+        <Expander Grid.Row="3" x:Name="LogExpander" Margin="0,6,0,0" IsExpanded="False"
+                  Expanded="LogExpander_Expanded" Collapsed="LogExpander_Collapsed">
             <Expander.Header><StackPanel Orientation="Horizontal"><TextBlock Text="Журнал" FontWeight="SemiBold"/><TextBlock x:Name="LogCountText" Text="0 записей" Foreground="{DynamicResource MutedBrush}" Margin="8,0,0,0"/><Border x:Name="LogErrorBadge" Background="#DC2626" CornerRadius="9" Padding="7,1" Margin="8,0,0,0" Visibility="Collapsed"><TextBlock Text="Новая проблема" Foreground="White" FontSize="11"/></Border></StackPanel></Expander.Header>
             <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,8,0,0">
-                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="140"/></Grid.RowDefinitions>
+                <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*" MinHeight="80"/></Grid.RowDefinitions>
                     <Grid Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal"><TextBlock Text="Показывать:" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/><ComboBox x:Name="LogFilterCombo" Width="150" Margin="8,0,0,0" SelectedIndex="0" SelectionChanged="LogFilter_Changed"><ComboBoxItem Content="Все"/><ComboBoxItem Content="Ошибки"/><ComboBoxItem Content="Предупреждения"/><ComboBoxItem Content="Информация"/></ComboBox></StackPanel><StackPanel Grid.Column="1" Orientation="Horizontal"><Button Content="Очистить" Click="ClearLogButton_Click"/><Button Content="Открыть папку" Click="OpenLogFolderButton_Click"/></StackPanel></Grid>
                     <ListBox Grid.Row="1" x:Name="LogList" FontFamily="Consolas" FontSize="12" Background="{DynamicResource SurfaceAltBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource BorderBrush}" ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
                 </Grid>
             </Border>
         </Expander>
 
-        <Grid Grid.Row="3" Margin="0,14,0,0">
+        <Grid Grid.Row="4" Margin="0,14,0,0" MinHeight="44" VerticalAlignment="Bottom">
             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel>
                 <TextBlock x:Name="ConfigurationSummaryText" Text="Управление папками и PACS" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}"/>

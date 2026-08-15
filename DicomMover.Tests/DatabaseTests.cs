@@ -89,6 +89,39 @@ public sealed class DatabaseTests : IDisposable
     }
 
     [Fact]
+    public void PersistsOperationalProblemAndResolvesIt()
+    {
+        var database = new Database(DatabasePath);
+        database.ReportProblem("folder:test", "Folder", "Импорт", "Нет доступа", @"C:\Import", targetId: "folder-1");
+
+        var reopened = new Database(DatabasePath);
+        var problem = Assert.Single(reopened.GetActiveProblems());
+        Assert.Equal("Folder", problem.Kind);
+        Assert.Equal("Нет доступа", problem.Details);
+
+        reopened.ResolveProblem(problem.Key);
+
+        Assert.Empty(reopened.GetActiveProblems());
+    }
+
+    [Fact]
+    public void RetryingExhaustedDeliveryResolvesItsProblem()
+    {
+        var database = new Database(DatabasePath);
+        var pacs = new PacsSettings { Id = "pacs", Name = "PACS" };
+        database.Enqueue("key", "file.dcm", "1.2.3", null, "folder", [pacs]);
+        var delivery = Assert.IsType<DeliveryItem>(database.GetNextReadyDelivery());
+        database.MarkDeliverySending(delivery);
+        database.MarkDeliveryFailed(delivery, "Ошибка DICOM", null, exhausted: true);
+
+        Assert.Equal("Delivery", Assert.Single(database.GetActiveProblems()).Kind);
+
+        database.RetryQueueItem(delivery.QueueItemId);
+
+        Assert.Empty(database.GetActiveProblems());
+    }
+
+    [Fact]
     public void HidesSentItemsOlderThanUiCutoffButKeepsThemInDatabase()
     {
         var database = new Database(DatabasePath);
@@ -123,6 +156,29 @@ public sealed class DatabaseTests : IDisposable
     }
 
     [Fact]
+    public void FinalPartialDeliveryCountsAsNotSent()
+    {
+        var database = new Database(DatabasePath);
+        var first = new PacsSettings { Id = "pacs-1", Name = "Основной" };
+        var second = new PacsSettings { Id = "pacs-2", Name = "Резервный" };
+        database.Enqueue("key", "file.dcm", "1.2.3", null, "folder", [first, second]);
+
+        var firstDelivery = Assert.IsType<DeliveryItem>(database.GetNextReadyDelivery());
+        database.MarkDeliverySending(firstDelivery);
+        database.MarkDeliverySent(firstDelivery, "Success");
+        var secondDelivery = Assert.IsType<DeliveryItem>(database.GetNextReadyDelivery());
+        database.MarkDeliverySending(secondDelivery);
+        database.MarkDeliveryFailed(secondDelivery, "C-STORE failure", null, exhausted: true);
+
+        var summary = database.GetDailySummary(DateTime.Today);
+
+        Assert.Equal(1, summary.Found);
+        Assert.Equal(0, summary.InQueue);
+        Assert.Equal(0, summary.Sent);
+        Assert.Equal(1, summary.WithErrors);
+    }
+
+    [Fact]
     public void CanHideAllStatusesWithoutDeletingQueueData()
     {
         var database = new Database(DatabasePath);
@@ -145,9 +201,16 @@ public sealed class DatabaseTests : IDisposable
         database.Enqueue("key", "file.dcm", "1.2.3", null, "folder", [pacs]);
         var delivery = Assert.IsType<DeliveryItem>(database.GetNextReadyDelivery());
         database.MarkDeliverySending(delivery);
-        database.MarkDeliveryUnavailable(delivery, "PACS недоступен", DateTime.UtcNow.AddMinutes(1));
+        database.MarkDeliveryUnavailable(delivery, "PACS недоступен");
 
         Assert.Equal(0, Assert.Single(database.GetDeliveryDetails(delivery.QueueItemId)).AttemptCount);
+        Assert.Null(database.GetNextReadyDelivery());
+        var daily = database.GetDailySummary(DateTime.Today);
+        Assert.Equal(1, daily.InQueue);
+        Assert.Equal(0, daily.WithErrors);
+
+        Assert.Equal(1, database.ReleaseUnavailableDeliveries(pacs.Id));
+        Assert.NotNull(database.GetNextReadyDelivery());
     }
 
     [Fact]
@@ -194,9 +257,69 @@ public sealed class DatabaseTests : IDisposable
         var summary = database.GetDailySummary(DateTime.Now);
 
         Assert.Equal(1, summary.Found);
+        Assert.Equal(0, summary.InQueue);
         Assert.Equal(1, summary.Sent);
         Assert.Equal(0, summary.WithErrors);
         Assert.Equal("ok", database.CheckIntegrityAndOptimize());
+    }
+
+    [Fact]
+    public void DailySummaryIncludesRejectedFilesAndKeepsCategoryFormula()
+    {
+        var database = new Database(DatabasePath);
+        database.Enqueue("pending", "pending.dcm", "1.2.1");
+        database.Enqueue("sent", "sent.dcm", "1.2.2");
+        database.Enqueue("exhausted", "exhausted.dcm", "1.2.3");
+
+        var sent = database.GetRecent(10).Single(item => item.FileKey == "sent");
+        database.MarkSent(sent.Id, sent.SopInstanceUid!, "Success");
+        var exhausted = database.GetRecent(10).Single(item => item.FileKey == "exhausted");
+        database.MarkSending(exhausted.Id);
+        database.MarkFailed(exhausted.Id, "C-STORE failure", null, attemptsExhausted: true);
+        database.RecordRejectedFile("bad.tmp", Path.Combine(_directory, "BAD", "bad.tmp"), "Перемещён в BAD.");
+
+        var summary = database.GetDailySummary(DateTime.Today);
+        var bad = database.GetFileResultsForPeriod(DateTime.Today, DateTime.Today)
+            .Single(item => item.Status == "Некорректный DICOM");
+
+        Assert.Equal(4, summary.Found);
+        Assert.Equal(1, summary.InQueue);
+        Assert.Equal(1, summary.Sent);
+        Assert.Equal(2, summary.WithErrors);
+        Assert.Equal(summary.Found, summary.InQueue + summary.Sent + summary.WithErrors);
+        Assert.Equal("bad.tmp", bad.FileName);
+        Assert.Equal("Не определено", bad.PatientName);
+    }
+
+    [Fact]
+    public void ArchivedHistoryRemainsInDailyAndPeriodSummary()
+    {
+        var database = new Database(DatabasePath);
+        var pacs = new PacsSettings { Id = "pacs", Name = "PACS" };
+        database.Enqueue("key", "file.dcm", "1.2.3", null, "folder", [pacs]);
+        var delivery = Assert.IsType<DeliveryItem>(database.GetNextReadyDelivery());
+        database.MarkDeliverySending(delivery);
+        database.MarkDeliverySent(delivery, "Success");
+
+        Assert.Equal(1, database.ArchiveSentHistory());
+        Assert.Empty(database.GetRecent(10));
+
+        var daily = database.GetDailySummary(DateTime.Today);
+        var period = database.GetPeriodSummary(DateTime.Today, DateTime.Today);
+        var pacsSummary = Assert.Single(database.GetPacsPeriodSummary(DateTime.Today, DateTime.Today));
+        var sentFile = Assert.Single(database.GetFileResultsForPeriod(DateTime.Today, DateTime.Today));
+
+        Assert.Equal(1, daily.Found);
+        Assert.Equal(1, daily.Sent);
+        Assert.Equal(1, period.Found);
+        Assert.Equal(1, period.Sent);
+        Assert.Equal(1, period.Attempts);
+        Assert.Equal(1, pacsSummary.Sent);
+        Assert.Equal(1, pacsSummary.Attempts);
+        Assert.Equal("file.dcm", sentFile.FileName);
+        Assert.Equal("PACS", sentFile.PacsName);
+        Assert.Equal("Отправлено", sentFile.Status);
+        Assert.NotNull(sentFile.EventAt);
     }
 
     [Fact]

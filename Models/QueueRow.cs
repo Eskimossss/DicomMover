@@ -2,6 +2,7 @@ namespace DicomMover.Models;
 
 public sealed class QueueRow
 {
+    public int RowNumber { get; set; }
     public long Id { get; init; }
     public string FilePath { get; init; } = string.Empty;
     public string FileName { get; init; } = string.Empty;

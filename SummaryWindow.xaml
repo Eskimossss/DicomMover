@@ -1,0 +1,108 @@
+<Window x:Class="DicomMover.SummaryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Сводка отправки" Width="900" Height="700" MinWidth="760" MinHeight="560"
+        Icon="Assets/dicommover.ico" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource WindowBackgroundBrush}" Foreground="{DynamicResource TextBrush}" FontFamily="Segoe UI" FontSize="13">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="13,7"/>
+            <Setter Property="Margin" Value="4,0"/>
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{DynamicResource PrimaryBrush}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource PrimaryBrush}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="18,9"/>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="С " VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/>
+                <DatePicker x:Name="FromDatePicker" Width="145" SelectedDateChanged="DatePicker_SelectedDateChanged"/>
+                <TextBlock Text=" по " Margin="12,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/>
+                <DatePicker x:Name="ToDatePicker" Width="145" SelectedDateChanged="DatePicker_SelectedDateChanged"/>
+            </StackPanel>
+            <Button Grid.Column="1" Content="Сегодня" Padding="16,7" Click="TodayButton_Click"/>
+        </Grid>
+
+        <TextBlock Grid.Row="1" x:Name="PeriodText" Margin="0,10,0,6" FontSize="17" FontWeight="SemiBold"/>
+
+        <UniformGrid Grid.Row="2" Columns="4" Margin="0,0,0,10">
+            <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,7" Margin="0,0,8,0">
+                <StackPanel><TextBlock Text="НАЙДЕНО" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="FoundText" Text="0" FontSize="18" FontWeight="SemiBold"/></StackPanel>
+            </Border>
+            <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,7" Margin="0,0,8,0">
+                <StackPanel><TextBlock Text="ОТПРАВЛЕНО" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="SentText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource SuccessTextBrush}"/></StackPanel>
+            </Border>
+            <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,7" Margin="0,0,8,0">
+                <StackPanel><TextBlock Text="НЕ ОТПРАВЛЕНО" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="ErrorsText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource ErrorTextBrush}"/></StackPanel>
+            </Border>
+            <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,7">
+                <StackPanel><TextBlock Text="ПОПЫТОК" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="AttemptsText" Text="0" FontSize="18" FontWeight="SemiBold"/></StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <Grid Grid.Row="3">
+            <Grid.RowDefinitions><RowDefinition Height="3*"/><RowDefinition Height="10"/><RowDefinition Height="2*"/></Grid.RowDefinitions>
+            <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock x:Name="FileResultsHeading" Text="Файлы и результаты" FontWeight="SemiBold" Margin="4,2,0,8" ToolTip="Дважды щёлкните строку, чтобы открыть расположение доступного файла."/>
+                    <DataGrid Grid.Row="1" x:Name="FileResultsGrid" AutoGenerateColumns="False" IsReadOnly="True" BorderThickness="0"
+                              Background="{DynamicResource SurfaceBrush}" RowBackground="{DynamicResource SurfaceBrush}" AlternatingRowBackground="{DynamicResource SurfaceAltBrush}"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="{DynamicResource GridLineBrush}"
+                              MouseDoubleClick="FileResultsGrid_MouseDoubleClick">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Файл" Binding="{Binding FileName}" Width="1.1*"/>
+                            <DataGridTextColumn Header="ФИО" Binding="{Binding PatientName}" Width="1.3*"/>
+                            <DataGridTextColumn Header="PACS" Binding="{Binding PacsName}" Width="1*"/>
+                            <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="115"/>
+                            <DataGridTextColumn Header="Попыток" Binding="{Binding Attempts}" Width="72"/>
+                            <DataGridTextColumn Header="Время" Binding="{Binding EventAtText}" Width="145"/>
+                            <DataGridTextColumn Header="Результат / ошибка" Binding="{Binding Result}" Width="1.5*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+            <GridSplitter Grid.Row="1" Height="4" HorizontalAlignment="Stretch" VerticalAlignment="Center" Background="{DynamicResource BorderBrush}"/>
+            <Border Grid.Row="2" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <TextBlock Text="По PACS" FontWeight="SemiBold" Margin="4,2,0,8"/>
+                    <DataGrid Grid.Row="1" x:Name="PacsGrid" AutoGenerateColumns="False" IsReadOnly="True" BorderThickness="0"
+                              Background="{DynamicResource SurfaceBrush}" RowBackground="{DynamicResource SurfaceBrush}" AlternatingRowBackground="{DynamicResource SurfaceAltBrush}"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="{DynamicResource GridLineBrush}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="PACS" Binding="{Binding PacsName}" Width="*"/>
+                            <DataGridTextColumn Header="Назначено" Binding="{Binding Assigned}" Width="100"/>
+                            <DataGridTextColumn Header="Отправлено" Binding="{Binding Sent}" Width="100"/>
+                            <DataGridTextColumn Header="Не отправлено" Binding="{Binding WithErrors}" Width="110"/>
+                            <DataGridTextColumn Header="Попыток" Binding="{Binding Attempts}" Width="90"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Закрыть" Style="{StaticResource PrimaryButton}" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

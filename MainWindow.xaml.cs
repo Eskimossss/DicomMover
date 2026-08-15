@@ -5,6 +5,7 @@ using System.Text;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
 using DicomMover.Models;
 using DicomMover.Services;
@@ -20,10 +21,12 @@ namespace DicomMover;
 public partial class MainWindow : Window
 {
     private readonly ObservableCollection<QueueRow> _rows = new();
+    private readonly ObservableCollection<ProblemRow> _problems = new();
     private readonly Queue<(DateTime Timestamp, string Line)> _visibleLogLines = new();
     private readonly DispatcherTimer _timer;
     private readonly SettingsStore _settingsStore;
     private System.Windows.Forms.NotifyIcon? _trayIcon;
+    private System.Windows.Forms.ToolStripMenuItem? _trayMonitorItem;
     private AppSettings _settings = new();
     private AppLogger? _logger;
     private Database? _database;
@@ -33,6 +36,9 @@ public partial class MainWindow : Window
     private bool _exitRequested;
     private bool _isUiInitialized;
     private DateTime _lastTrayNotificationUtc;
+    private readonly HashSet<string> _knownProblemKeys = new(StringComparer.Ordinal);
+    private int _unreadProblemCount;
+    private bool _problemTrackingInitialized;
 
     public MainWindow()
     {
@@ -57,38 +63,65 @@ public partial class MainWindow : Window
         }
 
         QueueGrid.ItemsSource = _rows;
+        ProblemsGrid.ItemsSource = _problems;
         PopulatePacsFilter();
         ApplyColumnSettings();
         UpdateConfigurationSummary();
         InitializeTray();
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _timer.Tick += (_, _) => { RefreshQueue(); TrimVisibleLog(); UpdateRuntimeStatusPanel(); };
+        _timer.Tick += UiTimer_Tick;
         _timer.Start();
         Loaded += MainWindow_Loaded;
+        SizeChanged += (_, _) => UpdateJournalBounds();
         System.Windows.Application.Current.SessionEnding += Application_SessionEnding;
         StateChanged += (_, _) => { if (WindowState == WindowState.Minimized && _settings.MinimizeToTray) Hide(); };
         RefreshQueue();
+        RefreshProblems();
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        UpdateJournalBounds();
+        JournalRow.Height = LogExpander.IsExpanded
+            ? new GridLength(Math.Clamp(_settings.JournalHeight, 120, JournalRow.MaxHeight))
+            : GridLength.Auto;
+        if (MainTabControl.SelectedIndex < 0)
+            MainTabControl.SelectedIndex = 0;
+        RefreshQueue();
         if (_settings.StartMinimized) { WindowState = WindowState.Minimized; if (_settings.MinimizeToTray) Hide(); }
         if (_settings.AutoStartMonitoring) await StartMonitoringAsync(false);
     }
 
     private void BuildServices(AppSettings runtimeSettings)
     {
+        if (_logger is not null) _logger.MessageWritten -= Logger_MessageWritten;
+        if (_monitor is not null) _monitor.PacsAvailabilityChanged -= Monitor_PacsAvailabilityChanged;
         runtimeSettings.Validate();
         runtimeSettings.DatabaseFile = AppPaths.Resolve(runtimeSettings.DatabaseFile);
         runtimeSettings.LogFile = AppPaths.Resolve(runtimeSettings.LogFile);
         _logger = new AppLogger(runtimeSettings.LogFile);
         _logger.CleanupOldLogs(runtimeSettings.LogRetentionDays);
-        _logger.MessageWritten += line => Dispatcher.BeginInvoke(() => AppendVisibleLog(line));
+        _logger.MessageWritten += Logger_MessageWritten;
         _database = new Database(runtimeSettings.DatabaseFile);
         _database.ApplyStudyDateFilters(runtimeSettings.WatchFolders);
         MaintainDatabase(runtimeSettings);
         _monitor = new FolderMonitor(runtimeSettings, _database, _logger);
+        _monitor.PacsAvailabilityChanged += Monitor_PacsAvailabilityChanged;
     }
+
+    private void UiTimer_Tick(object? sender, EventArgs e)
+    {
+        RefreshQueue();
+        RefreshProblems();
+        TrimVisibleLog();
+        UpdateRuntimeStatusPanel();
+        UpdateTrayStatus();
+    }
+
+    private void Logger_MessageWritten(string line) => Dispatcher.BeginInvoke(() => AppendVisibleLog(line));
+
+    private void Monitor_PacsAvailabilityChanged(string name, bool available, string? error) =>
+        Dispatcher.BeginInvoke(() => ShowPacsAvailabilityNotification(name, available, error));
 
     private void MaintainDatabase(AppSettings runtimeSettings)
     {
@@ -141,6 +174,7 @@ public partial class MainWindow : Window
             StatusIndicator.Fill = new SolidColorBrush(System.Windows.Media.Color.FromRgb(22, 163, 74));
             StatusText.Text = "Мониторинг активен";
             StatusBadge.SetResourceReference(Border.BackgroundProperty, "StatusActiveBackgroundBrush");
+            UpdateTrayStatus();
             await Task.Delay(50);
         }
         catch (Exception ex)
@@ -251,6 +285,7 @@ public partial class MainWindow : Window
             StatusIndicator.Fill = new SolidColorBrush(System.Windows.Media.Color.FromRgb(138, 148, 163));
             StatusText.Text = "Мониторинг остановлен";
             StatusBadge.SetResourceReference(Border.BackgroundProperty, "StatusStoppedBackgroundBrush");
+            UpdateTrayStatus();
         }
     }
 
@@ -263,7 +298,13 @@ public partial class MainWindow : Window
 
     private async void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
+        await OpenSettingsAsync();
+    }
+
+    private async Task OpenSettingsAsync(Action<SettingsWindow>? configureWindow = null)
+    {
         var window = new SettingsWindow(_settings) { Owner = this };
+        configureWindow?.Invoke(window);
         if (window.ShowDialog() != true) return;
         var wasRunning = _monitorTask is not null;
         if (wasRunning)
@@ -332,7 +373,7 @@ public partial class MainWindow : Window
 
     private Dictionary<string, DataGridColumn> ColumnsByKey() => new()
     {
-        ["file"] = FileColumn, ["patient"] = PatientColumn, ["modality"] = ModalityColumn,
+        ["number"] = NumberColumn, ["file"] = FileColumn, ["patient"] = PatientColumn, ["modality"] = ModalityColumn,
         ["status"] = StatusColumn, ["attempts"] = AttemptsColumn, ["time"] = TimeColumn,
         ["error"] = ErrorColumn, ["pacs"] = PacsColumn
     };
@@ -395,11 +436,13 @@ public partial class MainWindow : Window
             var indicator = target.Type == "Pacs"
                 ? target.Active ? target.Available switch { true => "●", false => "●", _ => "○" } : "Ⅱ"
                 : target.Active ? "▶" : "Ⅱ";
-            var color = !target.Active ? "#8A8F96" : target.Available switch
+            var color = target switch
             {
-                true => "#3D9B53",
-                false => "#C75B5B",
-                _ => "#718096"
+                { Active: false } => "#DC2626",
+                { Type: "Folder" } => "#15803D",
+                { Available: true } => "#15803D",
+                { Available: false } => "#DC2626",
+                _ => "#667085"
             };
             var button = new System.Windows.Controls.Button
             {
@@ -425,26 +468,54 @@ public partial class MainWindow : Window
     {
         if (_database is null) return;
         if (MessageBox.Show("Повторить все неуспешные доставки?", "DicomMover", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
-        try { var count = _database.RetryFailedAndStuck(); _logger?.Info($"Повторно поставлено в очередь: {count}."); RefreshQueue(); }
+        try { var count = _database.RetryFailedAndStuck(); _monitor?.WakeDeliveryLoop(); _logger?.Info($"Повторно поставлено в очередь: {count}."); RefreshQueue(); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
 
     private QueueRow? SelectedQueueRow => QueueGrid.SelectedItem as QueueRow;
 
-    private void QueueGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e) => ShowSelectedDetails();
+    private void QueueGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        var row = FindDataGridRow(QueueGrid, e.OriginalSource as DependencyObject);
+        if (row?.Item is QueueRow queueRow) ShowDetails(queueRow);
+    }
     private void DetailsMenuItem_Click(object sender, RoutedEventArgs e) => ShowSelectedDetails();
 
     private void ShowSelectedDetails()
     {
         if (_database is null || SelectedQueueRow is not { } row) return;
-        try { new StudyDetailsWindow(_database, _logger, row.Id) { Owner = this }.ShowDialog(); RefreshQueue(); }
+        ShowDetails(row);
+    }
+
+    private void ShowDetails(QueueRow row)
+    {
+        ShowDetails(row.Id);
+    }
+
+    private void ShowDetails(long queueItemId)
+    {
+        if (_database is null) return;
+        try { new StudyDetailsWindow(_database, _logger, queueItemId) { Owner = this }.ShowDialog(); RefreshQueue(); RefreshProblems(); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Подробности", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
+
+    private void DataGrid_PreviewMouseRightButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not DataGrid grid) return;
+        var row = FindDataGridRow(grid, e.OriginalSource as DependencyObject);
+        if (row is null) return;
+        grid.SelectedItem = row.Item;
+        row.Focus();
+    }
+
+    private static DataGridRow? FindDataGridRow(DataGrid grid, DependencyObject? source) =>
+        source is null ? null : ItemsControl.ContainerFromElement(grid, source) as DataGridRow;
 
     private void RetryItemMenuItem_Click(object sender, RoutedEventArgs e)
     {
         if (_database is null || SelectedQueueRow is not { } row) return;
         var affected = _database.RetryQueueItem(row.Id);
+        _monitor?.WakeDeliveryLoop();
         var item = _database.GetItem(row.Id);
         var identity = !string.IsNullOrWhiteSpace(item?.SopInstanceUid) ? $"SOP Instance UID {item.SopInstanceUid}" : row.FilePath;
         if (affected == 0)
@@ -531,13 +602,8 @@ public partial class MainWindow : Window
         if (_database is null) return;
         try
         {
+            var selectedId = SelectedQueueRow?.Id;
             var cutoff = DateTime.UtcNow.AddHours(-_settings.UiRetentionHours);
-            var counts = _database.GetCounts(cutoff);
-            PendingCountText.Text = (counts.Pending + counts.Sending).ToString();
-            SentCountText.Text = counts.Sent.ToString();
-            FailedCountText.Text = counts.Failed.ToString();
-            var daily = _database.GetDailySummary(DateTime.Now);
-            DailySummaryText.Text = $"Сегодня: найдено {daily.Found}, отправлено {daily.Sent}, с ошибками {daily.WithErrors}";
             var search = SearchTextBox?.Text.Trim() ?? "";
             var status = (StatusFilterCombo?.SelectedItem as ComboBoxItem)?.Content?.ToString();
             var pacs = (PacsFilterCombo?.SelectedItem as ComboBoxItem)?.Content?.ToString();
@@ -547,10 +613,220 @@ public partial class MainWindow : Window
                 (status is null or "Все" || QueueRow.FromItem(item).Status == status) &&
                 (pacs is null or "Все" || item.DeliverySummary?.Contains(pacs, StringComparison.CurrentCultureIgnoreCase) == true));
             _rows.Clear();
-            foreach (var item in items) _rows.Add(QueueRow.FromItem(item));
+            var rowNumber = 1;
+            foreach (var item in items)
+            {
+                var row = QueueRow.FromItem(item);
+                row.RowNumber = rowNumber++;
+                _rows.Add(row);
+            }
+            if (selectedId is { } queueItemId)
+                QueueGrid.SelectedItem = _rows.FirstOrDefault(row => row.Id == queueItemId);
             EmptyQueuePanel.Visibility = ready && _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         catch (Exception ex) { _logger?.Error($"Не удалось обновить очередь: {ex.Message}"); }
+    }
+
+    private void RefreshProblems()
+    {
+        if (_database is null)
+        {
+            _problems.Clear();
+            ClearProblemNotifications();
+            EmptyProblemsPanel.Visibility = Visibility.Visible;
+            return;
+        }
+
+        var selectedKey = SelectedProblem?.Key;
+        var records = _database.GetActiveProblems();
+        var currentKeys = records.Select(problem => problem.Key).ToHashSet(StringComparer.Ordinal);
+        if (!_problemTrackingInitialized)
+        {
+            _unreadProblemCount = currentKeys.Count;
+            _problemTrackingInitialized = true;
+        }
+        else
+        {
+            _unreadProblemCount += currentKeys.Count(key => !_knownProblemKeys.Contains(key));
+        }
+        _knownProblemKeys.Clear();
+        _knownProblemKeys.UnionWith(currentKeys);
+        _problems.Clear();
+        foreach (var problem in records) _problems.Add(ProblemRow.FromRecord(problem));
+        if (selectedKey is not null)
+            ProblemsGrid.SelectedItem = _problems.FirstOrDefault(problem => problem.Key == selectedKey);
+        if (MainTabControl.SelectedIndex == 1) _unreadProblemCount = 0;
+        UpdateProblemBadge();
+        EmptyProblemsPanel.Visibility = _problems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_isUiInitialized) return;
+        var showProblems = MainTabControl.SelectedIndex == 1;
+        QueueNavigationButton.IsChecked = !showProblems;
+        ProblemsNavigationButton.IsChecked = showProblems;
+        ProblemsSummaryText.Visibility = showProblems ? Visibility.Visible : Visibility.Collapsed;
+        QueueTabActionsPanel.Visibility = showProblems ? Visibility.Collapsed : Visibility.Visible;
+        ProblemsTabActionsPanel.Visibility = showProblems ? Visibility.Visible : Visibility.Collapsed;
+        if (showProblems) ClearProblemNotifications();
+    }
+
+    private void QueueNavigationButton_Click(object sender, RoutedEventArgs e) => MainTabControl.SelectedIndex = 0;
+
+    private void ProblemsNavigationButton_Click(object sender, RoutedEventArgs e) => MainTabControl.SelectedIndex = 1;
+
+    private void SummaryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_database is null) return;
+        new SummaryWindow(_database) { Owner = this }.ShowDialog();
+    }
+
+    private void ClearProblemsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_database is null || _problems.Count == 0) return;
+        var answer = MessageBox.Show(
+            "Убрать все текущие записи из списка активных проблем?\n\nФайлы не будут удалены, а отправки не будут запущены повторно.",
+            "Очистить список проблем",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (answer != MessageBoxResult.Yes) return;
+        _database.ResolveAllProblems();
+        ClearProblemNotifications();
+        RefreshProblems();
+    }
+
+    private void ClearProblemNotifications()
+    {
+        _unreadProblemCount = 0;
+        UpdateProblemBadge();
+    }
+
+    private void UpdateProblemBadge()
+    {
+        ProblemCountText.Text = _unreadProblemCount.ToString();
+        ProblemBadge.Visibility = _unreadProblemCount == 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private ProblemRow? SelectedProblem => ProblemsGrid.SelectedItem as ProblemRow;
+
+    private void ProblemsGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        var row = FindDataGridRow(ProblemsGrid, e.OriginalSource as DependencyObject);
+        if (row?.Item is ProblemRow problem) ShowProblemDetails(problem);
+    }
+
+    private void ProblemDetailsMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedProblem is { } problem) ShowProblemDetails(problem);
+    }
+
+    private void ShowProblemDetails(ProblemRow problem)
+    {
+        if (problem.QueueItemId is { } queueItemId)
+        {
+            ShowDetails(queueItemId);
+            return;
+        }
+
+        MessageBox.Show(
+            "Для этой активной проблемы нет связанной записи исследования.\n\n" +
+            $"Тип: {problem.Type}\nОбъект: {problem.ObjectName}\n\n{problem.Details}",
+            "Подробности исследования",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
+    private async void ProblemActionMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_database is null || SelectedProblem is not { } problem) return;
+        try
+        {
+            switch (problem.KindCode)
+            {
+                case "Encoding" or "EncodingIrrecoverable" or "EncodingAmbiguous":
+                    var queueItem = problem.QueueItemId is { } encodingQueueItemId
+                        ? _database.GetItem(encodingQueueItemId)
+                        : null;
+                    await OpenSettingsAsync(window =>
+                        window.OpenEncodingRule(queueItem?.FolderId, problem.TargetId));
+                    break;
+                case "Delivery" when problem.QueueItemId is { } queueItemId:
+                    RetryProblem(problem, queueItemId);
+                    break;
+                case "Pacs" when problem.TargetId is { } pacsId:
+                    var pacs = _settings.PacsServers.FirstOrDefault(item => item.Id == pacsId);
+                    if (pacs is null) return;
+                    var check = await CheckPacsBeforeStartAsync(pacs);
+                    if (check.Available) _database.ResolveProblem(problem.Key);
+                    else _database.ReportProblem(problem.Key, "Pacs", pacs.Name, check.Error ?? "PACS недоступен", targetId: pacs.Id);
+                    MessageBox.Show(check.Available ? "PACS доступен." : $"PACS недоступен:\n{check.Error}", "C-ECHO",
+                        MessageBoxButton.OK, check.Available ? MessageBoxImage.Information : MessageBoxImage.Warning);
+                    break;
+                case "Folder" when !string.IsNullOrWhiteSpace(problem.FilePath):
+                    _ = Directory.EnumerateFileSystemEntries(problem.FilePath).Take(1).ToList();
+                    _database.ResolveProblem(problem.Key);
+                    MessageBox.Show("Папка доступна.", "Проверка папки", MessageBoxButton.OK, MessageBoxImage.Information);
+                    break;
+                case "BadFile":
+                    OpenLocation(problem.FilePath);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Не удалось выполнить действие", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        RefreshProblems();
+        RefreshQueue();
+    }
+
+    private void ProblemRetryMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_database is null || SelectedProblem is not { QueueItemId: { } queueItemId } problem) return;
+        try
+        {
+            RetryProblem(problem, queueItemId);
+            RefreshProblems();
+            RefreshQueue();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "Не удалось повторить отправку", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void RetryProblem(ProblemRow problem, long queueItemId)
+    {
+        if (_database is null) return;
+        _database.RetryQueueItem(queueItemId);
+        _monitor?.WakeDeliveryLoop();
+        _logger?.Info($"Доставка повторно поставлена в очередь вручную: {problem.ObjectName}.");
+    }
+
+    private void ProblemOpenLocationMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedProblem is { } problem) OpenLocation(problem.FilePath);
+    }
+
+    private void ResolveProblemMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_database is null || SelectedProblem is not { } problem) return;
+        _database.ResolveProblem(problem.Key);
+        RefreshProblems();
+    }
+
+    private static void OpenLocation(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        var directory = Directory.Exists(path) ? path : Path.GetDirectoryName(path);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return;
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "explorer.exe",
+            Arguments = File.Exists(path) ? $"/select,\"{path}\"" : $"\"{directory}\"",
+            UseShellExecute = true
+        });
     }
 
     private void AppendVisibleLog(string line)
@@ -562,7 +838,9 @@ public partial class MainWindow : Window
              line.Contains("[WARN]", StringComparison.Ordinal)) && !LogExpander.IsExpanded)
             LogErrorBadge.Visibility = Visibility.Visible;
         TrimVisibleLog();
-        if (_trayIcon is not null &&
+        var isPacsAvailabilityMessage = line.Contains("PACS ", StringComparison.OrdinalIgnoreCase) &&
+            line.Contains("недоступен", StringComparison.OrdinalIgnoreCase);
+        if (_trayIcon is not null && !isPacsAvailabilityMessage &&
             (line.Contains("[ERROR]", StringComparison.Ordinal) ||
              line.Contains("[WARN]", StringComparison.Ordinal) ||
              line.Contains("лимит", StringComparison.OrdinalIgnoreCase)) &&
@@ -590,8 +868,39 @@ public partial class MainWindow : Window
         if (_isUiInitialized) RebuildLogView();
     }
 
-    private void LogExpander_Expanded(object sender, RoutedEventArgs e) =>
+    private void LogExpander_Expanded(object sender, RoutedEventArgs e)
+    {
         LogErrorBadge.Visibility = Visibility.Collapsed;
+        JournalRow.MinHeight = 120;
+        UpdateJournalBounds();
+        JournalRow.Height = new GridLength(Math.Clamp(_settings.JournalHeight, 120, JournalRow.MaxHeight));
+    }
+
+    private void LogExpander_Collapsed(object sender, RoutedEventArgs e)
+    {
+        if (JournalRow.ActualHeight >= 120) _settings.JournalHeight = JournalRow.ActualHeight;
+        JournalRow.MinHeight = 0;
+        JournalRow.Height = GridLength.Auto;
+    }
+
+    private void JournalSplitter_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (!LogExpander.IsExpanded || JournalRow.ActualHeight < 120) return;
+        _settings.JournalHeight = Math.Clamp(JournalRow.ActualHeight, 120, JournalRow.MaxHeight);
+        try { _settingsStore.Save(_settings); }
+        catch (Exception ex) { _logger?.Warn($"Не удалось сохранить высоту журнала: {ex.Message}"); }
+    }
+
+    private void UpdateJournalBounds()
+    {
+        if (JournalRow is null || RootLayout is null) return;
+        // Резервируем реальную высоту шапки, минимальную высоту очереди и всю нижнюю панель.
+        var rows = RootLayout.RowDefinitions;
+        var reservedHeight = rows[0].ActualHeight + MainContentRow.MinHeight + rows[2].ActualHeight + FooterRow.ActualHeight + 8;
+        JournalRow.MaxHeight = Math.Max(120, RootLayout.ActualHeight - reservedHeight);
+        if (LogExpander?.IsExpanded == true && JournalRow.Height.IsAbsolute && JournalRow.Height.Value > JournalRow.MaxHeight)
+            JournalRow.Height = new GridLength(JournalRow.MaxHeight);
+    }
 
     private void RebuildLogView()
     {
@@ -640,6 +949,11 @@ public partial class MainWindow : Window
             using var embeddedIcon = new System.Drawing.Icon(iconResource.Stream);
             var menu = new System.Windows.Forms.ContextMenuStrip();
             menu.Items.Add("Открыть", null, (_, _) => ShowFromTray());
+            _trayMonitorItem = new System.Windows.Forms.ToolStripMenuItem("Запустить мониторинг", null,
+                (_, _) => Dispatcher.Invoke(() => MonitorToggleButton_Click(this, new RoutedEventArgs())));
+            menu.Items.Add(_trayMonitorItem);
+            menu.Items.Add("Настройки", null, (_, _) => Dispatcher.Invoke(() => SettingsButton_Click(this, new RoutedEventArgs())));
+            menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
             menu.Items.Add("Выход", null, (_, _) => Dispatcher.Invoke(RequestExit));
             _trayIcon = new System.Windows.Forms.NotifyIcon
             {
@@ -649,8 +963,34 @@ public partial class MainWindow : Window
                 ContextMenuStrip = menu
             };
             _trayIcon.DoubleClick += (_, _) => Dispatcher.Invoke(ShowFromTray);
+            UpdateTrayStatus();
         }
         catch { }
+    }
+
+    private void UpdateTrayStatus()
+    {
+        if (_trayIcon is null) return;
+        var running = _monitorTask is not null;
+        var problemCount = _database?.GetActiveProblems().Count ?? 0;
+        _trayIcon.Text = problemCount > 0
+            ? $"DicomMover — {(running ? "работает" : "остановлен")}; проблем: {problemCount}"
+            : $"DicomMover — {(running ? "мониторинг работает" : "мониторинг остановлен")}";
+        if (_trayMonitorItem is not null)
+            _trayMonitorItem.Text = running ? "Остановить мониторинг" : "Запустить мониторинг";
+    }
+
+    private void ShowPacsAvailabilityNotification(string name, bool available, string? error)
+    {
+        if (_trayIcon is null) return;
+        var message = available
+            ? $"Связь с PACS «{name}» восстановлена."
+            : $"PACS «{name}» стал недоступен.{(string.IsNullOrWhiteSpace(error) ? string.Empty : $" {error}")}";
+        if (message.Length > 220) message = message[..220];
+        _trayIcon.ShowBalloonTip(5000, "DicomMover", message,
+            available ? System.Windows.Forms.ToolTipIcon.Info : System.Windows.Forms.ToolTipIcon.Warning);
+        RefreshProblems();
+        UpdateTrayStatus();
     }
 
     private void ShowFromTray() { Show(); WindowState = WindowState.Normal; Activate(); }
@@ -687,6 +1027,10 @@ public partial class MainWindow : Window
         }
         _trayIcon?.Icon?.Dispose();
         _trayIcon?.Dispose();
+        _timer.Stop();
+        _timer.Tick -= UiTimer_Tick;
+        if (_logger is not null) _logger.MessageWritten -= Logger_MessageWritten;
+        if (_monitor is not null) _monitor.PacsAvailabilityChanged -= Monitor_PacsAvailabilityChanged;
         SaveColumnSettings();
         try { _settingsStore.Save(_settings); } catch { }
         System.Windows.Application.Current.SessionEnding -= Application_SessionEnding;

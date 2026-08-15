@@ -73,4 +73,51 @@ public sealed class SettingsStoreTests
         Assert.False(File.Exists(path));
     }
 
+    [Fact]
+    public void LoadsExistingConfigurationWithoutEncodingFields()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "DicomMoverSettingsTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "appsettings.json");
+        try
+        {
+            File.WriteAllText(path, """
+                {
+                  "WatchFolders": [{ "Id": "f", "Name": "Папка", "Path": "C:\\\\dicom", "Enabled": true, "PacsIds": ["p"] }],
+                  "PacsServers": [{ "Id": "p", "Name": "PACS", "Enabled": true, "IpAddress": "127.0.0.1", "Port": 104, "CalledAeTitle": "PACS", "CallingAeTitle": "MOVER" }]
+                }
+                """);
+            var settings = new SettingsStore(path).Load();
+            Assert.Empty(settings.EncodingRules);
+            Assert.InRange(settings.JournalHeight, 120, 600);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Fact]
+    public void MissingSourceEncodingMigratesToAutomaticAndRoundTrips()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "DicomMoverSettingsTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "appsettings.json");
+        try
+        {
+            File.WriteAllText(path, """
+                {
+                  "WatchFolders": [{ "Id": "f", "Name": "Папка", "Path": "C:\\dicom", "Enabled": true, "PacsIds": ["p"] }],
+                  "PacsServers": [{ "Id": "p", "Name": "PACS", "Enabled": true, "IpAddress": "127.0.0.1", "Port": 104, "CalledAeTitle": "PACS", "CallingAeTitle": "MOVER" }],
+                  "EncodingRules": [{ "Name": "Старое правило", "DestinationPacsId": "p", "SourceFolderId": "f", "ProcessingMode": "RepairInvalidTextElements", "TargetEncoding": "IsoIr192", "SelectedTextFields": ["00100010"] }]
+                }
+                """);
+            var store = new SettingsStore(path);
+            var settings = store.Load();
+            Assert.Equal(SourceEncodingMode.Automatic, Assert.Single(settings.EncodingRules).SourceEncodingMode);
+
+            settings.EncodingRules[0].SourceEncodingMode = SourceEncodingMode.ForceIso88595;
+            store.Save(settings);
+            Assert.Equal(SourceEncodingMode.ForceIso88595, Assert.Single(store.Load().EncodingRules).SourceEncodingMode);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
 }

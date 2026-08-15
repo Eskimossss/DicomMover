@@ -65,6 +65,7 @@ public sealed class AppSettingsTests
         var pacs = new PacsSettings { Id = "pacs" };
         var settings = new AppSettings
         {
+            PacsHealthCheckSeconds = 75,
             PacsServers = [pacs],
             WatchFolders = [new WatchFolderSettings { Name = "Root", Path = Path.GetTempPath(), PacsIds = [pacs.Id] }]
         };
@@ -73,5 +74,22 @@ public sealed class AppSettingsTests
         var copy = settings.Copy();
 
         Assert.Equal(expected, copy.WatchFolders[0].SendStudiesFromDate);
+        Assert.Equal(75, copy.PacsHealthCheckSeconds);
+    }
+
+    [Theory]
+    [InlineData(9)]
+    [InlineData(3601)]
+    public void RejectsUnsafePacsHealthCheckInterval(int interval)
+    {
+        var pacs = new PacsSettings { Id = "pacs" };
+        var settings = new AppSettings
+        {
+            PacsHealthCheckSeconds = interval,
+            PacsServers = [pacs],
+            WatchFolders = [new WatchFolderSettings { Name = "Root", Path = Path.GetTempPath(), PacsIds = [pacs.Id] }]
+        };
+
+        Assert.Throws<InvalidDataException>(settings.Validate);
     }
 }

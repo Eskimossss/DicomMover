@@ -32,6 +32,10 @@
                 </StackPanel>
             </ScrollViewer>
         </Border>
-        <Button Grid.Row="1" Content="Закрыть" IsCancel="True" HorizontalAlignment="Right" Padding="20,8" Margin="0,12,0,0"/>
+        <Grid Grid.Row="1" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Button x:Name="CheckUpdatesButton" Content="Проверить обновления" HorizontalAlignment="Left" Padding="16,8" Click="CheckUpdatesButton_Click"/>
+            <Button Grid.Column="1" Content="Закрыть" IsCancel="True" Padding="20,8"/>
+        </Grid>
     </Grid>
 </Window>

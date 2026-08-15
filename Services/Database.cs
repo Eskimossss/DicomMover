@@ -224,20 +224,41 @@ public sealed class Database
             command.Parameters.AddWithValue("$id", delivery.Id);
         });
         RecalculateQueueItem(delivery.QueueItemId);
+        if (exhausted)
+            ReportProblem($"delivery:{delivery.Id}", "Delivery", $"{Path.GetFileName(delivery.FilePath)} → {delivery.PacsName}", error, delivery.FilePath, delivery.QueueItemId, delivery.PacsId);
     }
 
-    public void MarkDeliveryUnavailable(DeliveryItem delivery, string error, DateTime nextAttempt)
+    public void MarkDeliveryUnavailable(DeliveryItem delivery, string error)
     {
         Execute("""
-            UPDATE queue_deliveries SET status='Failed', attempt_count=MAX(0,attempt_count-1),
-                last_error=$error, next_attempt_at_utc=$next WHERE id=$id;
+            UPDATE queue_deliveries SET status='Unavailable', attempt_count=MAX(0,attempt_count-1),
+                last_error=$error, next_attempt_at_utc=NULL WHERE id=$id;
             """, command =>
         {
             command.Parameters.AddWithValue("$error", error);
-            command.Parameters.AddWithValue("$next", nextAttempt.ToString("O"));
             command.Parameters.AddWithValue("$id", delivery.Id);
         });
         RecalculateQueueItem(delivery.QueueItemId);
+    }
+
+    public int ReleaseUnavailableDeliveries(string pacsId)
+    {
+        using var connection = Open();
+        using var select = connection.CreateCommand();
+        select.CommandText = "SELECT DISTINCT queue_item_id FROM queue_deliveries WHERE pacs_id=$pacs AND (status='Unavailable' OR (status='Failed' AND last_error LIKE 'PACS%'));";
+        select.Parameters.AddWithValue("$pacs", pacsId);
+        using var reader = select.ExecuteReader();
+        var queueItemIds = new List<long>();
+        while (reader.Read()) queueItemIds.Add(reader.GetInt64(0));
+        reader.Close();
+
+        using var update = connection.CreateCommand();
+        update.CommandText = "UPDATE queue_deliveries SET status='Pending',next_attempt_at_utc=NULL,last_error=NULL WHERE pacs_id=$pacs AND (status='Unavailable' OR (status='Failed' AND last_error LIKE 'PACS%'));";
+        update.Parameters.AddWithValue("$pacs", pacsId);
+        var affected = update.ExecuteNonQuery();
+        connection.Close();
+        foreach (var queueItemId in queueItemIds) RecalculateQueueItem(queueItemId);
+        return affected;
     }
 
     public void MarkDeliveryPendingAfterCancellation(DeliveryItem delivery)
@@ -265,6 +286,7 @@ public sealed class Database
                 WHEN EXISTS(SELECT 1 FROM queue_deliveries WHERE queue_item_id=$id AND status='Sent') THEN 'Partial'
                 WHEN EXISTS(SELECT 1 FROM queue_deliveries WHERE queue_item_id=$id AND status='Exhausted') THEN 'Exhausted'
                 WHEN EXISTS(SELECT 1 FROM queue_deliveries WHERE queue_item_id=$id AND status='Failed') THEN 'Failed'
+                WHEN EXISTS(SELECT 1 FROM queue_deliveries WHERE queue_item_id=$id AND status='Unavailable') THEN 'Failed'
                 ELSE 'Pending' END,
               sent_at_utc = CASE WHEN NOT EXISTS(SELECT 1 FROM queue_deliveries WHERE queue_item_id=$id AND status<>'Sent') THEN $now ELSE sent_at_utc END,
               attempt_count = COALESCE((SELECT MAX(attempt_count) FROM queue_deliveries WHERE queue_item_id=$id),0),
@@ -286,7 +308,7 @@ public sealed class Database
             SELECT id, file_key, file_path, status, attempt_count,
                    discovered_at_utc, last_attempt_at_utc, sent_at_utc,
                    sop_instance_uid, pacs_status, last_error, patient_name,
-                   (SELECT group_concat(pacs_name || ': ' || CASE status WHEN 'Pending' THEN 'ожидает' WHEN 'Sending' THEN 'отправляется' WHEN 'Sent' THEN 'отправлено' WHEN 'Failed' THEN 'ошибка' WHEN 'Exhausted' THEN 'лимит попыток' ELSE status END, '; ') FROM queue_deliveries WHERE queue_item_id=queue_items.id),
+                   (SELECT group_concat(pacs_name || ': ' || CASE status WHEN 'Pending' THEN 'ожидает' WHEN 'Sending' THEN 'отправляется' WHEN 'Sent' THEN 'отправлено' WHEN 'Failed' THEN 'ошибка' WHEN 'Unavailable' THEN 'PACS недоступен' WHEN 'Exhausted' THEN 'лимит попыток' ELSE status END, '; ') FROM queue_deliveries WHERE queue_item_id=queue_items.id),
                    folder_id,patient_id,patient_birth_date,modality,study_instance_uid,accession_number,study_date
             FROM queue_items
             WHERE status IN ('Pending', 'Failed')
@@ -380,10 +402,12 @@ public int RetryFailedAndStuck()
         WHERE status IN ('Failed', 'Sending', 'Exhausted');
         UPDATE queue_deliveries
         SET status='Pending', next_attempt_at_utc=NULL, last_error=NULL, attempt_count=0
-        WHERE status IN ('Failed','Sending','Exhausted');
+        WHERE status IN ('Failed','Sending','Unavailable','Exhausted');
         """;
 
-    return command.ExecuteNonQuery();
+    var affected = command.ExecuteNonQuery();
+    ResolveProblemsByKind("Delivery");
+    return affected;
 }
     public int ArchiveSentHistory()
 {
@@ -490,7 +514,9 @@ public int RetryFailedAndStuck()
             WHERE id=$id AND EXISTS(SELECT 1 FROM queue_deliveries WHERE queue_item_id=$id AND status<>'Sent');
             """;
         command.Parameters.AddWithValue("$id", queueItemId);
-        return command.ExecuteNonQuery();
+        var affected = command.ExecuteNonQuery();
+        ResolveProblemsForQueueItem(queueItemId);
+        return affected;
     }
 
     public int RetryDelivery(long deliveryId)
@@ -503,7 +529,9 @@ public int RetryFailedAndStuck()
             WHERE id=(SELECT queue_item_id FROM queue_deliveries WHERE id=$id AND status<>'Sent');
             """;
         command.Parameters.AddWithValue("$id", deliveryId);
-        return command.ExecuteNonQuery();
+        var affected = command.ExecuteNonQuery();
+        ResolveProblem($"delivery:{deliveryId}");
+        return affected;
     }
 
     private static string TranslateDeliveryStatus(string status) => status switch
@@ -511,8 +539,11 @@ public int RetryFailedAndStuck()
         "Pending" => "Ожидает",
         "Sending" => "Отправляется",
         "Sent" => "Отправлено",
+        "Partial" => "Отправлен частично",
         "Failed" => "Ошибка",
+        "Unavailable" => "PACS недоступен",
         "Exhausted" => "Лимит попыток",
+        "BadFile" => "Некорректный DICOM",
         _ => status
     };
     public QueueCounts GetCounts(DateTime? sentCutoffUtc = null)
@@ -554,7 +585,7 @@ public int RetryFailedAndStuck()
         SELECT id, file_key, file_path, status, attempt_count,
                discovered_at_utc, last_attempt_at_utc, sent_at_utc,
                sop_instance_uid, pacs_status, last_error, patient_name,
-               (SELECT group_concat(pacs_name || ': ' || CASE status WHEN 'Pending' THEN 'ожидает' WHEN 'Sending' THEN 'отправляется' WHEN 'Sent' THEN 'отправлено' WHEN 'Failed' THEN 'ошибка' WHEN 'Exhausted' THEN 'лимит попыток' ELSE status END, '; ') FROM queue_deliveries WHERE queue_item_id=queue_items.id),
+               (SELECT group_concat(pacs_name || ': ' || CASE status WHEN 'Pending' THEN 'ожидает' WHEN 'Sending' THEN 'отправляется' WHEN 'Sent' THEN 'отправлено' WHEN 'Failed' THEN 'ошибка' WHEN 'Unavailable' THEN 'PACS недоступен' WHEN 'Exhausted' THEN 'лимит попыток' ELSE status END, '; ') FROM queue_deliveries WHERE queue_item_id=queue_items.id),
                folder_id,patient_id,patient_birth_date,modality,study_instance_uid,accession_number,study_date
         FROM queue_items
         WHERE is_archived = 0
@@ -576,6 +607,109 @@ public int RetryFailedAndStuck()
 
     return result;
 }
+
+    public void ReportProblem(
+        string key,
+        string kind,
+        string objectName,
+        string details,
+        string? filePath = null,
+        long? queueItemId = null,
+        string? targetId = null)
+    {
+        Execute("""
+            INSERT INTO operational_problems
+                (problem_key,kind,object_name,details,file_path,queue_item_id,target_id,occurred_at_utc,resolved_at_utc)
+            VALUES ($key,$kind,$object,$details,$path,$queue,$target,$now,NULL)
+            ON CONFLICT(problem_key) DO UPDATE SET
+                kind=excluded.kind, object_name=excluded.object_name, details=excluded.details,
+                file_path=excluded.file_path, queue_item_id=excluded.queue_item_id,
+                target_id=excluded.target_id,
+                occurred_at_utc=CASE WHEN operational_problems.resolved_at_utc IS NULL
+                    THEN operational_problems.occurred_at_utc ELSE excluded.occurred_at_utc END,
+                resolved_at_utc=NULL;
+            """, command =>
+        {
+            command.Parameters.AddWithValue("$key", key);
+            command.Parameters.AddWithValue("$kind", kind);
+            command.Parameters.AddWithValue("$object", objectName);
+            command.Parameters.AddWithValue("$details", details);
+            command.Parameters.AddWithValue("$path", (object?)filePath ?? DBNull.Value);
+            command.Parameters.AddWithValue("$queue", (object?)queueItemId ?? DBNull.Value);
+            command.Parameters.AddWithValue("$target", (object?)targetId ?? DBNull.Value);
+            command.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O"));
+        });
+    }
+
+    public void ResolveProblem(string key) => Execute(
+        "UPDATE operational_problems SET resolved_at_utc=$now WHERE problem_key=$key AND resolved_at_utc IS NULL;",
+        command =>
+        {
+            command.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O"));
+            command.Parameters.AddWithValue("$key", key);
+        });
+
+    public void RecordRejectedFile(string originalPath, string storedPath, string reason)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT OR IGNORE INTO rejected_files(original_path,stored_path,reason,detected_at_utc)
+            VALUES($original,$stored,$reason,$detected);
+            """;
+        command.Parameters.AddWithValue("$original", originalPath);
+        command.Parameters.AddWithValue("$stored", storedPath);
+        command.Parameters.AddWithValue("$reason", reason);
+        command.Parameters.AddWithValue("$detected", DateTime.UtcNow.ToString("O"));
+        command.ExecuteNonQuery();
+    }
+
+    public void ResolveAllProblems() => Execute(
+        "UPDATE operational_problems SET resolved_at_utc=$now WHERE resolved_at_utc IS NULL;",
+        command => command.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O")));
+
+    private void ResolveProblemsByKind(string kind) => Execute(
+        "UPDATE operational_problems SET resolved_at_utc=$now WHERE kind=$kind AND resolved_at_utc IS NULL;",
+        command =>
+        {
+            command.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O"));
+            command.Parameters.AddWithValue("$kind", kind);
+        });
+
+    private void ResolveProblemsForQueueItem(long queueItemId) => Execute(
+        "UPDATE operational_problems SET resolved_at_utc=$now WHERE queue_item_id=$id AND resolved_at_utc IS NULL;",
+        command =>
+        {
+            command.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O"));
+            command.Parameters.AddWithValue("$id", queueItemId);
+        });
+
+    public IReadOnlyList<ProblemRecord> GetActiveProblems()
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id,problem_key,kind,object_name,details,file_path,queue_item_id,target_id,occurred_at_utc
+            FROM operational_problems WHERE resolved_at_utc IS NULL
+            ORDER BY occurred_at_utc DESC;
+            """;
+        using var reader = command.ExecuteReader();
+        var result = new List<ProblemRecord>();
+        while (reader.Read())
+            result.Add(new ProblemRecord
+            {
+                Id = reader.GetInt64(0),
+                Key = reader.GetString(1),
+                Kind = reader.GetString(2),
+                ObjectName = reader.GetString(3),
+                Details = reader.GetString(4),
+                FilePath = reader.IsDBNull(5) ? null : reader.GetString(5),
+                QueueItemId = reader.IsDBNull(6) ? null : reader.GetInt64(6),
+                TargetId = reader.IsDBNull(7) ? null : reader.GetString(7),
+                OccurredAtUtc = DateTime.Parse(reader.GetString(8))
+            });
+        return result;
+    }
 
     private void Initialize()
 {
@@ -632,9 +766,35 @@ public int RetryFailedAndStuck()
             first_sent_at_utc TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS operational_problems (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            problem_key TEXT NOT NULL UNIQUE,
+            kind TEXT NOT NULL,
+            object_name TEXT NOT NULL,
+            details TEXT NOT NULL,
+            file_path TEXT NULL,
+            queue_item_id INTEGER NULL,
+            target_id TEXT NULL,
+            occurred_at_utc TEXT NOT NULL,
+            resolved_at_utc TEXT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS rejected_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_path TEXT NOT NULL,
+            stored_path TEXT NOT NULL UNIQUE,
+            reason TEXT NOT NULL,
+            detected_at_utc TEXT NOT NULL
+        );
+
         INSERT OR IGNORE INTO sent_sop_instances(sop_instance_uid,first_sent_at_utc)
         SELECT sop_instance_uid,COALESCE(sent_at_utc,discovered_at_utc)
         FROM queue_items WHERE status='Sent' AND sop_instance_uid IS NOT NULL;
+
+        INSERT OR IGNORE INTO rejected_files(original_path,stored_path,reason,detected_at_utc)
+        SELECT file_path,file_path,details,occurred_at_utc
+        FROM operational_problems
+        WHERE kind='BadFile' AND file_path IS NOT NULL;
 
         UPDATE queue_deliveries SET status='Failed', next_attempt_at_utc=$now,
             last_error=COALESCE(last_error, 'Предыдущий запуск завершился во время отправки.')
@@ -752,6 +912,7 @@ private void EnsureColumn(string columnName, string definition)
             DELETE FROM queue_items
             WHERE (status='Sent' OR is_archived=1)
               AND COALESCE(sent_at_utc,last_attempt_at_utc,discovered_at_utc) < $cutoff;
+            DELETE FROM rejected_files WHERE detected_at_utc < $cutoff;
             """;
         command.Parameters.AddWithValue("$cutoff", DateTime.UtcNow.AddDays(-retentionDays).ToString("O"));
         return command.ExecuteNonQuery();
@@ -779,15 +940,171 @@ private void EnsureColumn(string columnName, string definition)
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT COUNT(*),
+                   SUM(CASE WHEN status<>'Sent' AND NOT (
+                       status='Exhausted' OR
+                       (status='Partial'
+                        AND EXISTS(SELECT 1 FROM queue_deliveries d WHERE d.queue_item_id=queue_items.id AND d.status='Exhausted')
+                        AND NOT EXISTS(SELECT 1 FROM queue_deliveries d WHERE d.queue_item_id=queue_items.id AND d.status IN ('Pending','Sending','Failed','Unavailable')))
+                   ) THEN 1 ELSE 0 END),
                    SUM(CASE WHEN status='Sent' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN status IN ('Failed','PartiallySent') THEN 1 ELSE 0 END)
+                   SUM(CASE WHEN status='Exhausted' OR
+                       (status='Partial'
+                        AND EXISTS(SELECT 1 FROM queue_deliveries d WHERE d.queue_item_id=queue_items.id AND d.status='Exhausted')
+                        AND NOT EXISTS(SELECT 1 FROM queue_deliveries d WHERE d.queue_item_id=queue_items.id AND d.status IN ('Pending','Sending','Failed','Unavailable')))
+                   THEN 1 ELSE 0 END)
             FROM queue_items WHERE discovered_at_utc >= $start AND discovered_at_utc < $end;
             """;
         command.Parameters.AddWithValue("$start", start.ToString("O"));
         command.Parameters.AddWithValue("$end", end.ToString("O"));
         using var reader = command.ExecuteReader();
         reader.Read();
-        return new DailySummary(reader.GetInt32(0), reader.IsDBNull(1) ? 0 : reader.GetInt32(1), reader.IsDBNull(2) ? 0 : reader.GetInt32(2));
+        var queueFound = reader.GetInt32(0);
+        var inQueue = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+        var sent = reader.IsDBNull(2) ? 0 : reader.GetInt32(2);
+        var notSent = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
+        reader.Close();
+        var rejected = GetRejectedCount(connection, start, end);
+        return new DailySummary(
+            queueFound + rejected,
+            inQueue,
+            sent,
+            notSent + rejected);
+    }
+
+    public PeriodSummary GetPeriodSummary(DateTime localFrom, DateTime localTo)
+    {
+        var start = localFrom.Date.ToUniversalTime();
+        var end = localTo.Date.AddDays(1).ToUniversalTime();
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*),
+                   SUM(CASE WHEN q.status='Sent' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN q.status='Exhausted' OR
+                       (q.status='Partial'
+                        AND EXISTS(SELECT 1 FROM queue_deliveries dx WHERE dx.queue_item_id=q.id AND dx.status='Exhausted')
+                        AND NOT EXISTS(SELECT 1 FROM queue_deliveries dr WHERE dr.queue_item_id=q.id AND dr.status IN ('Pending','Sending','Failed','Unavailable')))
+                   THEN 1 ELSE 0 END),
+                   COALESCE((SELECT SUM(d.attempt_count)
+                             FROM queue_deliveries d
+                             JOIN queue_items qi ON qi.id=d.queue_item_id
+                             WHERE qi.discovered_at_utc >= $start AND qi.discovered_at_utc < $end), 0)
+            FROM queue_items q
+            WHERE q.discovered_at_utc >= $start AND q.discovered_at_utc < $end;
+            """;
+        command.Parameters.AddWithValue("$start", start.ToString("O"));
+        command.Parameters.AddWithValue("$end", end.ToString("O"));
+        using var reader = command.ExecuteReader();
+        reader.Read();
+        var queueFound = reader.GetInt32(0);
+        var sent = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+        var notSent = reader.IsDBNull(2) ? 0 : reader.GetInt32(2);
+        var attempts = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
+        reader.Close();
+        var rejected = GetRejectedCount(connection, start, end);
+        return new PeriodSummary(
+            queueFound + rejected,
+            sent,
+            notSent + rejected,
+            attempts);
+    }
+
+    public IReadOnlyList<PacsPeriodSummary> GetPacsPeriodSummary(DateTime localFrom, DateTime localTo)
+    {
+        var start = localFrom.Date.ToUniversalTime();
+        var end = localTo.Date.AddDays(1).ToUniversalTime();
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT d.pacs_name,
+                   COUNT(*),
+                   SUM(CASE WHEN d.status='Sent' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN d.status='Exhausted' THEN 1 ELSE 0 END),
+                   SUM(d.attempt_count)
+            FROM queue_deliveries d
+            JOIN queue_items q ON q.id=d.queue_item_id
+            WHERE q.discovered_at_utc >= $start AND q.discovered_at_utc < $end
+            GROUP BY d.pacs_id, d.pacs_name
+            ORDER BY d.pacs_name;
+            """;
+        command.Parameters.AddWithValue("$start", start.ToString("O"));
+        command.Parameters.AddWithValue("$end", end.ToString("O"));
+        using var reader = command.ExecuteReader();
+        var result = new List<PacsPeriodSummary>();
+        while (reader.Read())
+            result.Add(new PacsPeriodSummary(
+                reader.GetString(0),
+                reader.GetInt32(1),
+                reader.IsDBNull(2) ? 0 : reader.GetInt32(2),
+                reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
+                reader.IsDBNull(4) ? 0 : reader.GetInt32(4)));
+        return result;
+    }
+
+    public IReadOnlyList<FileResultSummary> GetFileResultsForPeriod(DateTime localFrom, DateTime localTo)
+    {
+        var start = localFrom.Date.ToUniversalTime();
+        var end = localTo.Date.AddDays(1).ToUniversalTime();
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            WITH results(file_path,patient_name,pacs_name,status,attempt_count,event_at,result,sort_at) AS (
+                SELECT q.file_path,
+                       COALESCE(NULLIF(q.patient_name, ''), 'Не указано'),
+                       COALESCE(d.pacs_name, 'Не назначен'),
+                       COALESCE(d.status, q.status),
+                       COALESCE(d.attempt_count, q.attempt_count),
+                       COALESCE(d.sent_at_utc, d.last_attempt_at_utc, q.sent_at_utc, q.last_attempt_at_utc, q.discovered_at_utc),
+                       COALESCE(d.last_error, d.pacs_status, q.last_error, ''),
+                       q.discovered_at_utc
+                FROM queue_items q
+                LEFT JOIN queue_deliveries d ON d.queue_item_id=q.id
+                WHERE q.discovered_at_utc >= $start AND q.discovered_at_utc < $end
+                UNION ALL
+                SELECT r.stored_path,
+                       'Не определено',
+                       'Не назначен',
+                       'BadFile',
+                       0,
+                       r.detected_at_utc,
+                       r.reason,
+                       r.detected_at_utc
+                FROM rejected_files r
+                WHERE r.detected_at_utc >= $start AND r.detected_at_utc < $end
+            )
+            SELECT file_path,patient_name,pacs_name,status,attempt_count,event_at,result
+            FROM results ORDER BY sort_at DESC;
+            """;
+        command.Parameters.AddWithValue("$start", start.ToString("O"));
+        command.Parameters.AddWithValue("$end", end.ToString("O"));
+        using var reader = command.ExecuteReader();
+        var result = new List<FileResultSummary>();
+        while (reader.Read())
+        {
+            var eventAt = reader.IsDBNull(5)
+                ? (DateTime?)null
+                : DateTime.Parse(reader.GetString(5)).ToLocalTime();
+            var status = reader.GetString(3);
+            result.Add(new FileResultSummary(
+                Path.GetFileName(reader.GetString(0)),
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                TranslateDeliveryStatus(status),
+                reader.GetInt32(4),
+                eventAt,
+                reader.GetString(6)));
+        }
+        return result;
+    }
+
+    private static int GetRejectedCount(SqliteConnection connection, DateTime startUtc, DateTime endUtc)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM rejected_files WHERE detected_at_utc >= $start AND detected_at_utc < $end;";
+        command.Parameters.AddWithValue("$start", startUtc.ToString("O"));
+        command.Parameters.AddWithValue("$end", endUtc.ToString("O"));
+        return Convert.ToInt32(command.ExecuteScalar());
     }
 
     private static QueueItem Read(SqliteDataReader reader) => new()
@@ -819,4 +1136,18 @@ private void EnsureColumn(string columnName, string definition)
     };
 }
 
-public sealed record DailySummary(int Found, int Sent, int WithErrors);
+public sealed record DailySummary(int Found, int InQueue, int Sent, int WithErrors);
+public sealed record PeriodSummary(int Found, int Sent, int WithErrors, int Attempts);
+public sealed record PacsPeriodSummary(string PacsName, int Assigned, int Sent, int WithErrors, int Attempts);
+public sealed record FileResultSummary(
+    string FileName,
+    string FilePath,
+    string PatientName,
+    string PacsName,
+    string Status,
+    int Attempts,
+    DateTime? EventAt,
+    string Result)
+{
+    public string EventAtText => EventAt?.ToString("dd.MM.yyyy HH:mm:ss") ?? "—";
+}

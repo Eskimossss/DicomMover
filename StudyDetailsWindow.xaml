@@ -11,21 +11,23 @@
         </StackPanel>
         <Grid>
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-            <Grid Margin="0,0,0,12">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
-                <TextBlock Text="ФИО:" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="PatientNameText" Grid.Column="1" Margin="3"/>
-                <TextBlock Text="SOP Instance UID:" Grid.Row="1" FontWeight="SemiBold" Margin="3"/><TextBox x:Name="SopUidText" Grid.Row="1" Grid.Column="1" IsReadOnly="True" BorderThickness="0" Margin="3"/>
-                <TextBlock Text="Путь:" Grid.Row="2" FontWeight="SemiBold" Margin="3"/><TextBox x:Name="FilePathText" Grid.Row="2" Grid.Column="1" IsReadOnly="True" BorderThickness="0" TextWrapping="Wrap" Margin="3"/>
-                <TextBlock Text="Статус:" Grid.Row="3" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="StatusText" Grid.Row="3" Grid.Column="1" Margin="3"/>
-                <TextBlock Text="Последняя ошибка:" Grid.Row="4" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="LastErrorText" Grid.Row="4" Grid.Column="1" TextWrapping="Wrap" Foreground="#A00000" Margin="3"/>
-                <TextBlock Text="Patient ID:" Grid.Row="5" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="PatientIdText" Grid.Row="5" Grid.Column="1" Margin="3"/>
-                <TextBlock Text="Дата рождения:" Grid.Row="6" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="BirthDateText" Grid.Row="6" Grid.Column="1" Margin="3"/>
-                <TextBlock Text="Модальность:" Grid.Row="7" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="ModalityText" Grid.Row="7" Grid.Column="1" Margin="3"/>
-                <TextBlock Text="Study Instance UID:" Grid.Row="8" FontWeight="SemiBold" Margin="3"/><TextBox x:Name="StudyUidText" Grid.Row="8" Grid.Column="1" IsReadOnly="True" BorderThickness="0" Margin="3"/>
-                <TextBlock Text="Accession Number:" Grid.Row="9" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="AccessionText" Grid.Row="9" Grid.Column="1" Margin="3"/>
-                <TextBlock Text="Дата исследования:" Grid.Row="10" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="StudyDateText" Grid.Row="10" Grid.Column="1" Margin="3"/>
-            </Grid>
+            <ScrollViewer Margin="0,0,0,12" VerticalScrollBarVisibility="Auto" MaxHeight="260">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                    <TextBlock Text="ФИО:" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="PatientNameText" Grid.Column="1" Margin="3"/>
+                    <TextBlock Text="SOP Instance UID:" Grid.Row="1" FontWeight="SemiBold" Margin="3"/><TextBox x:Name="SopUidText" Grid.Row="1" Grid.Column="1" IsReadOnly="True" BorderThickness="0" Margin="3"/>
+                    <TextBlock Text="Путь:" Grid.Row="2" FontWeight="SemiBold" Margin="3"/><TextBox x:Name="FilePathText" Grid.Row="2" Grid.Column="1" IsReadOnly="True" BorderThickness="0" TextWrapping="Wrap" Margin="3"/>
+                    <TextBlock Text="Статус:" Grid.Row="3" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="StatusText" Grid.Row="3" Grid.Column="1" Margin="3"/>
+                    <TextBlock Text="Последняя ошибка:" Grid.Row="4" FontWeight="SemiBold" Margin="3"/><TextBox x:Name="LastErrorText" Grid.Row="4" Grid.Column="1" IsReadOnly="True" BorderThickness="0" TextWrapping="Wrap" Foreground="#A00000" Margin="3" MaxHeight="140" VerticalScrollBarVisibility="Auto"/>
+                    <TextBlock Text="Patient ID:" Grid.Row="5" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="PatientIdText" Grid.Row="5" Grid.Column="1" Margin="3"/>
+                    <TextBlock Text="Дата рождения:" Grid.Row="6" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="BirthDateText" Grid.Row="6" Grid.Column="1" Margin="3"/>
+                    <TextBlock Text="Модальность:" Grid.Row="7" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="ModalityText" Grid.Row="7" Grid.Column="1" Margin="3"/>
+                    <TextBlock Text="Study Instance UID:" Grid.Row="8" FontWeight="SemiBold" Margin="3"/><TextBox x:Name="StudyUidText" Grid.Row="8" Grid.Column="1" IsReadOnly="True" BorderThickness="0" Margin="3"/>
+                    <TextBlock Text="Accession Number:" Grid.Row="9" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="AccessionText" Grid.Row="9" Grid.Column="1" Margin="3"/>
+                    <TextBlock Text="Дата исследования:" Grid.Row="10" FontWeight="SemiBold" Margin="3"/><TextBlock x:Name="StudyDateText" Grid.Row="10" Grid.Column="1" Margin="3"/>
+                </Grid>
+            </ScrollViewer>
             <DataGrid x:Name="DeliveriesGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True">
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="PACS" Binding="{Binding PacsName}" Width="*"/>
