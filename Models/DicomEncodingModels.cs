@@ -38,17 +38,26 @@ public sealed record DicomPreviewValue(
     string Path, string TagId, string Tag, string FieldName, string SourceEncoding, string BeforeValue, string AfterValue,
     string? TransformedValue = null);
 
+public sealed record DicomRuleMetadata(string? Modality, string? StationName, string? Manufacturer);
+
+public sealed record EncodingRuleApplication(
+    string RuleName, string Conditions, bool Applies, string Result);
+
 public sealed record DicomFileDiagnosticResult(
-    string FilePath, string FileName, IReadOnlyList<DicomTextElementAnalysis> Elements)
+    string FilePath, string FileName, IReadOnlyList<DicomTextElementAnalysis> Elements,
+    EncodingRuleApplication? RuleApplication = null, DicomRuleMetadata? Metadata = null)
 {
-    public bool HasProblem => Elements.Any(x => x.Status is DicomTextElementStatus.Recoverable or
+    public bool IsApplicable => RuleApplication?.Applies != false;
+    public bool HasProblem => IsApplicable && Elements.Any(x => x.Status is DicomTextElementStatus.Recoverable or
         DicomTextElementStatus.Irrecoverable or DicomTextElementStatus.Ambiguous);
 }
 
-public sealed record DicomFileConversionResult(string FilePath, DicomConversionPreview Preview)
+public sealed record DicomFileConversionResult(string FilePath, DicomConversionPreview Preview,
+    EncodingRuleApplication? RuleApplication = null, DicomRuleMetadata? Metadata = null)
 {
     public string FileName => Preview.FileName;
-    public bool HasProblem => !Preview.Result.StartsWith('✓');
+    public bool IsApplicable => RuleApplication?.Applies != false;
+    public bool HasProblem => IsApplicable && !Preview.Result.StartsWith('✓');
 }
 
 public sealed record DicomTranscodeResult(DicomFile File, string SourceDescription, string TargetDescription, int RepairedElements = 0);

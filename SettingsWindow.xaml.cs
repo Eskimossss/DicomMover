@@ -48,6 +48,7 @@ public partial class SettingsWindow : Window
     private DicomTextDiagnosticResult? _lastDiagnostic;
     private bool _updatingFieldSelection;
     private readonly HashSet<string> _requiredFieldTags = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DicomMetadataValues> _conditionValuesCache = new(StringComparer.OrdinalIgnoreCase);
 
     private sealed record SelectionChoice(string? Id, string Name);
 
@@ -281,6 +282,7 @@ public partial class SettingsWindow : Window
         Result.EncodingRules.Add(rule);
         EncodingRulesGrid.Items.Refresh();
         EncodingRulesGrid.SelectedItem = rule;
+        RefreshConditionValues();
     }
 
     private void RemoveEncodingRule_Click(object sender, RoutedEventArgs e)
@@ -291,7 +293,68 @@ public partial class SettingsWindow : Window
         EncodingRulesGrid.SelectedItem = Result.EncodingRules.FirstOrDefault();
     }
 
-    private void EncodingRulesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateEncodingModeAvailability();
+    private void EncodingRulesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateEncodingModeAvailability();
+        RefreshConditionValues();
+    }
+    private void EncodingFolderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (EncodingRulesGrid?.SelectedItem is EncodingRule rule && EncodingFolderCombo.SelectedValue is string folderId)
+            rule.SourceFolderId = folderId;
+        RefreshConditionValues();
+    }
+    private void RefreshConditionValues_Click(object sender, RoutedEventArgs e) => RefreshConditionValues(true);
+
+    private void RefreshConditionValues(bool force = false)
+    {
+        if (ModalityConditionCombo is null || EncodingRulesGrid?.SelectedItem is not EncodingRule rule)
+        {
+            if (ModalityConditionCombo is not null)
+            {
+                ModalityConditionCombo.ItemsSource = null;
+                StationNameConditionCombo.ItemsSource = null;
+                ManufacturerConditionCombo.ItemsSource = null;
+            }
+            return;
+        }
+
+        var folderId = EncodingFolderCombo.SelectedValue as string ?? rule.SourceFolderId;
+        var folder = Result.WatchFolders.FirstOrDefault(item =>
+            string.Equals(item.Id, folderId, StringComparison.OrdinalIgnoreCase));
+        var values = DicomMetadataValues.Empty;
+        if (folder is not null)
+        {
+            try
+            {
+                if (force || !_conditionValuesCache.TryGetValue(folder.Id, out values!))
+                {
+                    System.Windows.Input.Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
+                    values = new DicomMetadataDiscoveryService().Discover(folder);
+                    _conditionValuesCache[folder.Id] = values;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (force) MessageBox.Show(ex.Message, "Обновление значений", MessageBoxButton.OK, MessageBoxImage.Warning);
+                values = DicomMetadataValues.Empty;
+            }
+            finally { System.Windows.Input.Mouse.OverrideCursor = null; }
+        }
+
+        var modality = rule.Modality;
+        var station = rule.StationName;
+        var manufacturer = rule.Manufacturer;
+        ModalityConditionCombo.ItemsSource = values.Modalities;
+        StationNameConditionCombo.ItemsSource = values.StationNames;
+        ManufacturerConditionCombo.ItemsSource = values.Manufacturers;
+        ModalityConditionCombo.Text = modality ?? string.Empty;
+        StationNameConditionCombo.Text = station ?? string.Empty;
+        ManufacturerConditionCombo.Text = manufacturer ?? string.Empty;
+        ModalityConditionCombo.ToolTip = values.Modalities.Count == 0 ? "В выбранной папке значения Modality не найдены." : $"Найдено значений: {values.Modalities.Count}";
+        StationNameConditionCombo.ToolTip = values.StationNames.Count == 0 ? "В выбранной папке значения Station Name не найдены." : $"Найдено значений: {values.StationNames.Count}";
+        ManufacturerConditionCombo.ToolTip = values.Manufacturers.Count == 0 ? "В выбранной папке значения Manufacturer не найдены." : $"Найдено значений: {values.Manufacturers.Count}";
+    }
     private void SourceEncodingCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) { }
 
     private void UpdateEncodingModeAvailability()
@@ -359,7 +422,7 @@ public partial class SettingsWindow : Window
         {
             System.Windows.Input.Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
             var files = new DicomTextDiagnosticService().AnalyzeFolderFiles(folder, rule);
-            var elements = files.SelectMany(x => x.Elements).ToList();
+            var elements = files.Where(x => x.IsApplicable).SelectMany(x => x.Elements).ToList();
             var repairable = elements.Count(x => x.Status == DicomTextElementStatus.Recoverable);
             var problems = files.Count(x => x.HasProblem);
             _lastDiagnostic = new(files.Count, files.Count, elements.Count(x => x.Status == DicomTextElementStatus.Ascii),
@@ -369,7 +432,7 @@ public partial class SettingsWindow : Window
                 repairable > 0 ? "Есть безопасно исправимые элементы." : "Исправимые элементы не обнаружены.", elements, repairable > 0);
             UpdateRequiredFields(elements, rule);
             ApplyRecommendationButton.IsEnabled = repairable > 0;
-            LastDiagnosticText.Text = $"Последняя проверка: {files.Count} файлов • проблем: {problems} • можно исправить: {repairable}";
+            LastDiagnosticText.Text = $"Последняя проверка: {files.Count} файлов • правило применяется: {files.Count(x => x.IsApplicable)} • не применяется: {files.Count(x => !x.IsApplicable)} • проблем: {problems} • можно исправить: {repairable}";
             LastDiagnosticText.Visibility = Visibility.Visible;
             System.Windows.Input.Mouse.OverrideCursor = null;
             new DicomTextDiagnosticWindow(files) { Owner = this }.ShowDialog();
@@ -413,10 +476,11 @@ public partial class SettingsWindow : Window
             var files = new DicomTextDiagnosticService().PreviewFolderFiles(folder, rule);
             var previews = files.Select(x => x.Preview).ToList();
             _requiredFieldTags.Clear();
-            foreach (var tag in previews.SelectMany(x => x.RequiredFieldTagIds ?? [])) _requiredFieldTags.Add(tag);
-            ShowRequiredFields(previews.SelectMany(x => x.Elements));
-            var successful = previews.Count(x => x.Result.StartsWith('✓'));
-            LastDiagnosticText.Text = $"Последняя проверка преобразования: {previews.Count} файлов • успешно: {successful} • ошибок: {previews.Count - successful}";
+            foreach (var tag in files.Where(x => x.IsApplicable).SelectMany(x => x.Preview.RequiredFieldTagIds ?? [])) _requiredFieldTags.Add(tag);
+            ShowRequiredFields(files.Where(x => x.IsApplicable).SelectMany(x => x.Preview.Elements));
+            var applicable = files.Count(x => x.IsApplicable);
+            var successful = files.Count(x => x.IsApplicable && !x.HasProblem);
+            LastDiagnosticText.Text = $"Последняя проверка преобразования: {previews.Count} файлов • применяется: {applicable} • не применяется: {previews.Count - applicable} • успешно: {successful} • ошибок: {files.Count(x => x.HasProblem)}";
             LastDiagnosticText.Visibility = Visibility.Visible;
             System.Windows.Input.Mouse.OverrideCursor = null;
             new DicomTextConversionWindow(files, rule.Copy()) { Owner = this }.ShowDialog();

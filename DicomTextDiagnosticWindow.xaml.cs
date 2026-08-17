@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using DicomMover.Models;
+using DicomMover.Services;
 using MessageBox = System.Windows.MessageBox;
 
 namespace DicomMover;
@@ -15,20 +16,26 @@ public partial class DicomTextDiagnosticWindow : Window
     {
         InitializeComponent();
         _allFiles = files;
-        FileFilterCombo.ItemsSource = new[] { "Все файлы", "Только с проблемами" };
+        FileFilterCombo.ItemsSource = new[] { "Все файлы", "Только с проблемами", "Правило применяется", "Правило не применяется" };
+        ModalityFilterCombo.ItemsSource = new[] { "Все" }.Concat(DicomResultFilter.UniqueValues(files, x => x.Metadata?.Modality)).ToList();
+        StationNameFilterCombo.ItemsSource = new[] { "Все" }.Concat(DicomResultFilter.UniqueValues(files, x => x.Metadata?.StationName)).ToList();
         ElementFilterCombo.ItemsSource = new[] { "Все", "Требуют внимания", "Можно исправить" };
         ElementFilterCombo.SelectedIndex = 0;
         FileFilterCombo.SelectedIndex = 0;
-        FolderSummaryText.Text = $"Файлов: {files.Count} • без проблем: {files.Count(x => !x.HasProblem)} • с проблемами: {files.Count(x => x.HasProblem)}";
+        ModalityFilterCombo.SelectedIndex = 0;
+        StationNameFilterCombo.SelectedIndex = 0;
+        var applicable = files.Count(x => x.IsApplicable);
+        FolderSummaryText.Text = $"Файлов: {files.Count} • применяется: {applicable} • не применяется: {files.Count - applicable} • без проблем: {files.Count(x => x.IsApplicable && !x.HasProblem)} • с проблемами: {files.Count(x => x.HasProblem)}";
         RefreshFiles();
     }
 
     private void RefreshFiles()
     {
         var currentPath = (FileCombo.SelectedItem as DicomFileDiagnosticResult)?.FilePath;
-        _visibleFiles = (FileFilterCombo.SelectedIndex == 1 ? _allFiles.Where(x => x.HasProblem) : _allFiles).ToList();
+        _visibleFiles = DicomResultFilter.Diagnostics(_allFiles, FileFilterCombo.SelectedIndex,
+            SelectedMetadata(ModalityFilterCombo), SelectedMetadata(StationNameFilterCombo));
         FileCombo.ItemsSource = _visibleFiles;
-        FileCombo.SelectedItem = _visibleFiles.FirstOrDefault(x => x.FilePath == currentPath) ?? _visibleFiles.FirstOrDefault();
+        FileCombo.SelectedItem = DicomResultFilter.PreserveSelection(_visibleFiles, currentPath, x => x.FilePath);
         RefreshCurrent();
     }
 
@@ -36,7 +43,7 @@ public partial class DicomTextDiagnosticWindow : Window
     {
         if (FileCombo.SelectedItem is not DicomFileDiagnosticResult file)
         {
-            ElementsGrid.ItemsSource = null; DetailsButton.IsEnabled = false; PositionText.Text = "0 из 0"; FileSummaryText.Text = "Подходящие файлы не найдены."; return;
+            ElementsGrid.ItemsSource = null; DetailsButton.IsEnabled = false; PositionText.Text = "0 из 0"; FileSummaryText.Text = "Подходящие файлы не найдены."; RuleSummaryText.Text = string.Empty; return;
         }
         var rows = file.Elements.Select(x => new DiagnosticElementRow { Source = x }).ToList();
         rows = ElementFilterCombo.SelectedIndex switch
@@ -52,11 +59,14 @@ public partial class DicomTextDiagnosticWindow : Window
         DetailsButton.IsEnabled = false;
         var all = file.Elements.Select(x => new DiagnosticElementRow { Source = x }).ToList();
         FileSummaryText.Text = $"Текстовых элементов: {all.Count} • корректных: {all.Count(x => x.Status == "Корректно")} • можно исправить: {all.Count(x => x.IsRepairable)} • ошибок: {all.Count(x => x.IsProblem && !x.IsRepairable)}";
+        RuleSummaryText.Text = file.RuleApplication is null ? string.Empty :
+            $"Правило: {file.RuleApplication.RuleName} • Условия: {file.RuleApplication.Conditions} • Результат: {file.RuleApplication.Result}";
         PositionText.Text = $"{_visibleFiles.IndexOf(file) + 1} из {_visibleFiles.Count}";
     }
 
     private void FileCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshCurrent();
     private void FileFilter_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (IsLoaded) RefreshFiles(); }
+    private void MetadataFilter_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (IsLoaded) RefreshFiles(); }
     private void ElementFilter_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (IsLoaded) RefreshCurrent(); }
     private void IgnoreEmptyCheck_Changed(object sender, RoutedEventArgs e) { if (IsLoaded) RefreshCurrent(); }
     private void Previous_Click(object sender, RoutedEventArgs e) => Move(-1);
@@ -78,4 +88,6 @@ public partial class DicomTextDiagnosticWindow : Window
         }
         new DicomElementDetailsWindow(DicomElementTechnicalDetails.From(row)) { Owner = this }.ShowDialog();
     }
+
+    private static string? SelectedMetadata(System.Windows.Controls.ComboBox combo) => combo.SelectedIndex <= 0 ? null : combo.SelectedItem?.ToString();
 }

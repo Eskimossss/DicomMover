@@ -202,9 +202,11 @@ public sealed class FolderMonitor
         _database.MarkDeliverySending(delivery);
         _logger.Info($"Отправка на {pacs.Name}: {delivery.FilePath}");
         DicomStatus? responseStatus = null;
+        EncodingRule? encodingRule = null;
         try
         {
-            var encodingRule = _encodingRuleResolver.Resolve(_settings.EncodingRules, delivery.FolderId, delivery.PacsId);
+            encodingRule = _encodingRuleResolver.ResolveForFile(
+                _settings.EncodingRules, delivery.FolderId, delivery.PacsId, delivery.FilePath);
             DicomTranscodeResult? transcodeResult = null;
             var shouldTransform = encodingRule is not null &&
                                   encodingRule.ProcessingMode != EncodingProcessingMode.NoChange &&
@@ -245,7 +247,7 @@ public sealed class FolderMonitor
             var exhausted = attempts >= _settings.MaxSendAttempts;
             var retryDelay = GetRetryDelay(attempts);
             var details = $"Не удалось выполнить перекодировку без потери данных. PACS: {pacs.Name}; тег: {ex.Tag?.ToString() ?? "не определён"}; " +
-                          $"режим: {(_encodingRuleResolver.Resolve(_settings.EncodingRules, delivery.FolderId, delivery.PacsId)?.ProcessingMode.ToString() ?? "не определён")}; " +
+                          $"режим: {(encodingRule?.ProcessingMode.ToString() ?? "не определён")}; " +
                           $"{ex.Message}" + (string.IsNullOrWhiteSpace(ex.ValueFragment) ? "" : $"; фрагмент: {ex.ValueFragment}");
             _database.MarkDeliveryFailed(delivery, details, exhausted ? null : DateTime.UtcNow.Add(retryDelay), exhausted);
             var problemKind = ex.FailureKind switch

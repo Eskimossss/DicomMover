@@ -13,7 +13,7 @@
             <Button Content="Закрыть" IsCancel="True" Padding="18,7"/>
         </StackPanel>
         <Grid>
-            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
             <Grid Margin="0,0,0,10">
                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <TextBlock x:Name="FolderSummaryText" FontWeight="SemiBold" Foreground="#475467" Margin="2,0,16,0" VerticalAlignment="Center"/>
@@ -21,19 +21,24 @@
                           VerticalAlignment="Center" Checked="IgnoreEmptyCheck_Changed" Unchecked="IgnoreEmptyCheck_Changed"/>
             </Grid>
             <Grid Grid.Row="1" Margin="0,0,0,10">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="300"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="170"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
-                <TextBlock Text="Файл:" VerticalAlignment="Center" FontWeight="SemiBold" Margin="2,0,8,0"/>
-                <ComboBox x:Name="FileCombo" Grid.Column="1" DisplayMemberPath="FileName" SelectionChanged="FileCombo_SelectionChanged" Padding="7,5"/>
-                <Button Grid.Column="2" Content="Предыдущий" Click="Previous_Click"/>
-                <TextBlock x:Name="PositionText" Grid.Column="3" VerticalAlignment="Center" MinWidth="65" TextAlignment="Center"/>
-                <Button Grid.Column="4" Content="Следующий" Click="Next_Click"/>
-                <TextBlock Grid.Column="5" Text="Файлы:" VerticalAlignment="Center" Margin="14,0,6,0"/>
-                <ComboBox x:Name="FileFilterCombo" Grid.Column="6" SelectionChanged="FileFilter_SelectionChanged" Padding="7,5"/>
-                <TextBlock Grid.Column="7" Text="Элементы:" VerticalAlignment="Center" Margin="14,0,6,0"/>
-                <ComboBox x:Name="ElementFilterCombo" Grid.Column="8" SelectionChanged="ElementFilter_SelectionChanged" Padding="7,5"/>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Файл:" VerticalAlignment="Center" FontWeight="SemiBold" Margin="2,0,8,0"/>
+                    <ComboBox x:Name="FileCombo" Width="330" DisplayMemberPath="FileName" SelectionChanged="FileCombo_SelectionChanged" Padding="7,5"/>
+                    <Button Content="Предыдущий" Click="Previous_Click"/>
+                    <TextBlock x:Name="PositionText" VerticalAlignment="Center" MinWidth="65" TextAlignment="Center"/>
+                    <Button Content="Следующий" Click="Next_Click"/>
+                </StackPanel>
+                <WrapPanel Grid.Row="1" Margin="0,8,0,0">
+                    <TextBlock Text="Файлы:" VerticalAlignment="Center" Margin="2,0,6,0"/><ComboBox x:Name="FileFilterCombo" Width="170" SelectionChanged="FileFilter_SelectionChanged" Padding="7,5"/>
+                    <TextBlock Text="Модальность:" VerticalAlignment="Center" Margin="14,0,6,0"/><ComboBox x:Name="ModalityFilterCombo" Width="120" SelectionChanged="MetadataFilter_SelectionChanged" Padding="7,5"/>
+                    <TextBlock Text="Station Name:" VerticalAlignment="Center" Margin="14,0,6,0"/><ComboBox x:Name="StationNameFilterCombo" Width="170" SelectionChanged="MetadataFilter_SelectionChanged" Padding="7,5"/>
+                    <TextBlock Text="Элементы:" VerticalAlignment="Center" Margin="14,0,6,0"/><ComboBox x:Name="ElementFilterCombo" Width="150" SelectionChanged="ElementFilter_SelectionChanged" Padding="7,5"/>
+                </WrapPanel>
             </Grid>
-            <TextBlock x:Name="FileSummaryText" Grid.Row="2" Foreground="#667085" Margin="2,0,0,8"/>
-            <DataGrid x:Name="ElementsGrid" Grid.Row="3" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
+            <TextBlock x:Name="RuleSummaryText" Grid.Row="2" Foreground="#475467" Margin="2,0,0,5" TextWrapping="Wrap"/>
+            <TextBlock x:Name="FileSummaryText" Grid.Row="3" Foreground="#667085" Margin="2,0,0,8"/>
+            <DataGrid x:Name="ElementsGrid" Grid.Row="4" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single"
                       EnableRowVirtualization="True" EnableColumnVirtualization="True" HeadersVisibility="Column"
                       VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" ClipboardCopyMode="IncludeHeader"
                       SelectionChanged="ElementsGrid_SelectionChanged" MouseDoubleClick="ElementsGrid_MouseDoubleClick">

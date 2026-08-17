@@ -129,9 +129,33 @@
                                 <StackPanel>
                                     <TextBlock Text="Название" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"/>
                                     <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
-                                        <StackPanel><TextBlock Text="Исходная папка" Style="{StaticResource LabelStyle}"/><ComboBox x:Name="EncodingFolderCombo" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding SourceFolderId, Mode=TwoWay}"/></StackPanel>
+                                        <StackPanel><TextBlock Text="Исходная папка" Style="{StaticResource LabelStyle}"/><ComboBox x:Name="EncodingFolderCombo" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding SourceFolderId, Mode=TwoWay}" SelectionChanged="EncodingFolderCombo_SelectionChanged"/></StackPanel>
                                         <StackPanel Grid.Column="2"><TextBlock Text="PACS назначения" Style="{StaticResource LabelStyle}"/><ComboBox x:Name="EncodingPacsCombo" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding DestinationPacsId, Mode=TwoWay}"/></StackPanel>
                                     </Grid>
+                                    <Border BorderBrush="#D7E0EC" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,8,0,5">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,3"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="Условия применения" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <Button Grid.Column="1" Content="Обновить значения" Padding="9,4" Margin="8,0,0,0" Click="RefreshConditionValues_Click"/>
+                                            </Grid>
+                                            <TextBlock Text="Правило применяется только к DICOM-файлам, соответствующим всем включённым условиям." Style="{StaticResource HintStyle}" Margin="0,0,0,8"/>
+                                            <Grid Margin="0,0,0,6">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                                <CheckBox x:Name="MatchModalityCheck" Content="Modality (0008,0060)" IsChecked="{Binding MatchModality, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                                <ComboBox x:Name="ModalityConditionCombo" Grid.Column="1" IsEditable="True" IsTextSearchEnabled="True" Text="{Binding Modality, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsChecked, ElementName=MatchModalityCheck}" ToolTip="Значения Modality в выбранной папке не найдены."/>
+                                            </Grid>
+                                            <Grid Margin="0,0,0,6">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                                <CheckBox x:Name="MatchStationNameCheck" Content="Station Name (0008,1010)" IsChecked="{Binding MatchStationName, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                                <ComboBox x:Name="StationNameConditionCombo" Grid.Column="1" IsEditable="True" IsTextSearchEnabled="True" Text="{Binding StationName, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsChecked, ElementName=MatchStationNameCheck}" ToolTip="Значения Station Name в выбранной папке не найдены."/>
+                                            </Grid>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                                <CheckBox x:Name="MatchManufacturerCheck" Content="Manufacturer (0008,0070)" IsChecked="{Binding MatchManufacturer, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                                <ComboBox x:Name="ManufacturerConditionCombo" Grid.Column="1" IsEditable="True" IsTextSearchEnabled="True" Text="{Binding Manufacturer, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsChecked, ElementName=MatchManufacturerCheck}" ToolTip="Значения Manufacturer в выбранной папке не найдены."/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
                                     <StackPanel x:Name="RepairFieldsPanel" Margin="0,4,0,0">
                                         <TextBlock Text="Поля для исправления" Style="{StaticResource LabelStyle}"/>
                                         <TextBlock Text="По умолчанию исправляется только ФИО пациента. Добавляйте остальные поля после диагностики." Style="{StaticResource HintStyle}" Margin="0,0,0,6"/>

@@ -54,6 +54,12 @@ public sealed class EncodingRule
     // null означает правило repair предыдущей версии: исправлять все безопасно определённые поля.
     public List<string>? SelectedTextFields { get; set; }
     public bool RepairAllTextFields { get; set; }
+    public bool MatchModality { get; set; }
+    public string? Modality { get; set; }
+    public bool MatchStationName { get; set; }
+    public string? StationName { get; set; }
+    public bool MatchManufacturer { get; set; }
+    public string? Manufacturer { get; set; }
 
     public static EncodingRule CreateNew(string name, string? sourceFolderId, string destinationPacsId) => new()
     {
@@ -163,6 +169,9 @@ public sealed class AppSettings
         EncodingRules ??= [];
         foreach (var rule in EncodingRules)
         {
+            rule.Modality = rule.Modality?.Trim();
+            rule.StationName = rule.StationName?.Trim();
+            rule.Manufacturer = rule.Manufacturer?.Trim();
             rule.SelectedTextFields = rule.SelectedTextFields?.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (!Enum.IsDefined(rule.SourceEncodingMode) || rule.SourceEncodingMode == SourceEncodingMode.UseFallbackWhenCharsetEmpty)
                 rule.SourceEncodingMode = SourceEncodingMode.Automatic;
@@ -296,12 +305,18 @@ public sealed class AppSettings
                 throw new InvalidDataException($"В правиле кодировки «{rule.Name}» выбран несуществующий PACS.");
             if (!WatchFolders.Any(f => string.Equals(f.Id, rule.SourceFolderId, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidDataException($"В правиле кодировки «{rule.Name}» выбрана несуществующая папка.");
+            if (rule.MatchModality && string.IsNullOrWhiteSpace(rule.Modality))
+                throw new InvalidDataException($"Укажите значение для условия Modality в правиле «{rule.Name}».");
+            if (rule.MatchStationName && string.IsNullOrWhiteSpace(rule.StationName))
+                throw new InvalidDataException($"Укажите значение для условия Station Name в правиле «{rule.Name}».");
+            if (rule.MatchManufacturer && string.IsNullOrWhiteSpace(rule.Manufacturer))
+                throw new InvalidDataException($"Укажите значение для условия Manufacturer в правиле «{rule.Name}».");
         }
         var duplicateRule = EncodingRules.Where(r => r.Enabled)
-            .GroupBy(r => $"{r.SourceFolderId}|{r.DestinationPacsId}", StringComparer.OrdinalIgnoreCase)
+            .GroupBy(RuleSignature, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault(g => g.Count() > 1);
         if (duplicateRule is not null)
-            throw new InvalidDataException("Нельзя создать два активных правила кодировки для одной пары «папка + PACS».");
+            throw new InvalidDataException("Нельзя создать два одинаковых активных правила кодировки для одной пары «папка + PACS» и одинаковых условий.");
 
         var roots = WatchFolders.Where(f => f.Enabled)
             .Select(f => (f.Name, Path: Path.GetFullPath(f.Path).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar))
@@ -314,4 +329,10 @@ public sealed class AppSettings
                 throw new InvalidDataException($"Папки «{roots[i].Name}» и «{roots[j].Name}» пересекаются. Оставьте только один корневой путь; поиск в подпапках продолжит работать.");
         }
     }
+
+    private static string RuleSignature(EncodingRule rule) => string.Join('|',
+        rule.SourceFolderId, rule.DestinationPacsId,
+        rule.MatchModality ? $"M:{rule.Modality?.Trim()}" : "M:-",
+        rule.MatchStationName ? $"S:{rule.StationName?.Trim()}" : "S:-",
+        rule.MatchManufacturer ? $"F:{rule.Manufacturer?.Trim()}" : "F:-");
 }
