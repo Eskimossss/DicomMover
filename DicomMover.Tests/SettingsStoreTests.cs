@@ -120,4 +120,18 @@ public sealed class SettingsStoreTests
         finally { Directory.Delete(directory, true); }
     }
 
+    [Fact]
+    public void AssemblyVersion_And_AboutDisplayVersion_Is1_5()
+    {
+        var assembly = typeof(AboutWindow).Assembly;
+        var version = assembly.GetName().Version!;
+        var infoVersion = System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(assembly)?.InformationalVersion;
+        var displayVersion = !string.IsNullOrWhiteSpace(infoVersion)
+            ? infoVersion.Split('+')[0].Trim()
+            : version.ToString(2);
+
+        Assert.Equal("1.5.0.0", version.ToString());
+        Assert.Equal("1.5", infoVersion);
+        Assert.Equal("1.5", displayVersion);
+    }
 }

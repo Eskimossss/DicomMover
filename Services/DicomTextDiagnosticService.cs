@@ -10,9 +10,10 @@ public sealed class DicomTextDiagnosticService
     public DicomTextDiagnosticResult AnalyzeFolder(WatchFolderSettings folder, EncodingRule? rule = null)
     {
         var files = AnalyzeFolderFiles(folder, rule);
-        var elements = files.SelectMany(x => x.Elements).ToList();
+        var applicableFiles = files.Where(x => x.IsApplicable).ToList();
+        var elements = applicableFiles.SelectMany(x => x.Elements).ToList();
         var charsets = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var file in files)
+        foreach (var file in applicableFiles)
         {
             try
             {
@@ -30,7 +31,7 @@ public sealed class DicomTextDiagnosticService
             : irrecoverable > 0 || ambiguous > 0
                 ? "Безопасно исправимых элементов не найдено. Требуется проверить повреждённые или неоднозначные поля."
                 : "Проблем кодировки не обнаружено; преобразование не требуется.";
-        return new(files.Count, files.Count,
+        return new(files.Count, applicableFiles.Count,
             elements.Count(x => x.Status == DicomTextElementStatus.Ascii),
             elements.Count(x => x.Status == DicomTextElementStatus.Valid), recoverable, irrecoverable, ambiguous,
             charsets, recommendation, elements, recoverable > 0);
@@ -41,6 +42,7 @@ public sealed class DicomTextDiagnosticService
         if (!Directory.Exists(folder.Path)) throw new DirectoryNotFoundException($"Папка не найдена: {folder.Path}");
         var candidates = CandidateFiles(folder).ToList();
         var analyzer = new DicomTextElementAnalyzer();
+        var resolver = new EncodingRuleResolver();
         var results = new List<DicomFileDiagnosticResult>();
         foreach (var info in candidates)
         {
@@ -49,10 +51,12 @@ public sealed class DicomTextDiagnosticService
             {
                 // Диагностике нужны только текстовые метаданные. Pixel Data намеренно не загружается.
                 var file = DicomFile.Open(info.FullName, FileReadOption.SkipLargeTags);
-                var elements = rule is null
-                    ? analyzer.Analyze(file, EffectiveSourceMode(null), info.Name)
-                    : analyzer.AnalyzeForRule(file, rule, info.Name);
-                results.Add(new(info.FullName, info.Name, elements));
+                var metadata = EncodingRuleResolver.ReadMetadata(file.Dataset);
+                var application = rule is null ? null : resolver.Evaluate(rule, metadata);
+                var elements = rule is not null && application!.Applies
+                    ? analyzer.AnalyzeForRule(file, rule, info.Name)
+                    : analyzer.Analyze(file, EffectiveSourceMode(null), info.Name);
+                results.Add(new(info.FullName, info.Name, elements, application, metadata));
             }
             catch (DicomException) { }
             catch (IOException) { }
@@ -68,14 +72,34 @@ public sealed class DicomTextDiagnosticService
     public IReadOnlyList<DicomFileConversionResult> PreviewFolderFiles(WatchFolderSettings folder, EncodingRule rule, int count = MaxFiles)
     {
         var transcoder = new DicomTextTranscoder();
+        var analyzer = new DicomTextElementAnalyzer();
+        var resolver = new EncodingRuleResolver();
         var result = new List<DicomFileConversionResult>();
         foreach (var info in CandidateFiles(folder))
         {
-            try { result.Add(new(info.FullName, transcoder.Preview(info.FullName, rule))); }
+            EncodingRuleApplication? application = null;
+            DicomRuleMetadata? metadata = null;
+            try
+            {
+                // Условия проверяются по метаданным без загрузки Pixel Data.
+                var metadataFile = DicomFile.Open(info.FullName, FileReadOption.SkipLargeTags);
+                metadata = EncodingRuleResolver.ReadMetadata(metadataFile.Dataset);
+                application = resolver.Evaluate(rule, metadata);
+                if (!application.Applies)
+                {
+                    var elements = analyzer.Analyze(metadataFile, EffectiveSourceMode(null), info.Name);
+                    result.Add(new(info.FullName, new(info.Name, DicomTextTranscoder.DisplayCharset(metadataFile.Dataset),
+                        TargetName(rule.TargetEncoding), elements, application.Result), application, metadata));
+                }
+                else
+                {
+                    result.Add(new(info.FullName, transcoder.Preview(info.FullName, rule), application, metadata));
+                }
+            }
             catch (DicomEncodingException ex)
             {
                 result.Add(new(info.FullName, new(info.Name, "не определено", TargetName(rule.TargetEncoding), [],
-                    $"✕ Преобразование невозможно: {ex.Message}")));
+                    $"✕ Преобразование невозможно: {ex.Message}"), application, metadata));
             }
             catch (DicomException) { continue; }
             if (result.Count >= count) break;
@@ -85,17 +109,11 @@ public sealed class DicomTextDiagnosticService
 
     private static IEnumerable<FileInfo> CandidateFiles(WatchFolderSettings folder)
     {
-        var option = folder.SearchSubfolders ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-        return Directory.EnumerateFiles(folder.Path, "*", option)
-            .Where(path => !IsInsideBad(path, folder.Path))
+        return SafeDirectoryEnumerator.EnumerateFiles(folder.Path, folder.SearchSubfolders)
             .Select(path => new FileInfo(path))
             .Where(info => info.Length > 0 && DateTime.UtcNow - info.LastWriteTimeUtc > TimeSpan.FromSeconds(2))
             .OrderByDescending(info => info.LastWriteTimeUtc).Take(MaxFiles * 4);
     }
-
-    private static bool IsInsideBad(string path, string root) => path.StartsWith(
-        Path.Combine(Path.GetFullPath(root), "BAD") + Path.DirectorySeparatorChar,
-        StringComparison.OrdinalIgnoreCase);
 
     private static SourceEncodingMode EffectiveSourceMode(SourceEncodingMode? mode) => mode switch
     {

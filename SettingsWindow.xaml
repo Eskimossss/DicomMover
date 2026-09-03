@@ -79,8 +79,13 @@
                             <Grid x:Name="ArchiveFolderPanel"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="ArchiveFolderText" Text="{Binding ArchiveFolder, UpdateSourceTrigger=PropertyChanged}"/><Button Grid.Column="1" Content="Выбрать…" Margin="8,3,0,10" Click="BrowseArchive_Click"/></Grid>
                             <CheckBox x:Name="PreserveSubfoldersCheck" Content="Сохранять структуру подпапок" IsChecked="{Binding PreserveSubfolders}" Margin="0,0,0,2"/>
                             <TextBlock Text="Работает только в режиме «В архив»: воспроизводит в архиве структуру каталогов относительно наблюдаемой папки." Style="{StaticResource HintStyle}" Margin="20,0,0,10"/>
-                            <CheckBox x:Name="DeleteEmptySubfoldersCheck" Content="Удалять пустые подпапки" IsChecked="{Binding DeleteEmptySubfolders}" Margin="0,0,0,2"/>
-                            <TextBlock Text="Работает в режимах «Удалить» и «В архив»: удаляет опустевшие вложенные папки. Корневая наблюдаемая папка не удаляется." Style="{StaticResource HintStyle}" Margin="20,0,0,0"/>
+                            <CheckBox x:Name="DeleteEmptySubfoldersCheck" Content="Удалять пустые подпапки" IsChecked="{Binding DeleteEmptySubfolders}" Checked="DeleteEmptySubfoldersCheck_Changed" Unchecked="DeleteEmptySubfoldersCheck_Changed" Margin="0,0,0,2"/>
+                            <TextBlock Text="Работает в режимах «Удалить» и «В архив»: удаляет опустевшие вложенные папки. Корневая наблюдаемая папка не удаляется." Style="{StaticResource HintStyle}" Margin="20,0,0,6"/>
+                            <StackPanel x:Name="EmptyFolderDelayPanel" Orientation="Horizontal" Margin="20,0,0,0" IsEnabled="{Binding IsChecked, ElementName=DeleteEmptySubfoldersCheck}">
+                                <TextBlock Text="Задержка удаления:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBox x:Name="EmptyFolderDelayText" Width="60" Text="{Binding EmptyFolderCleanupDelayMinutes, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center"/>
+                                <TextBlock Text="мин. (от 5 до 1440)" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}" Margin="8,0,0,0"/>
+                            </StackPanel>
                         </StackPanel></ScrollViewer>
                     </Border>
                 </Grid>
@@ -103,7 +108,10 @@
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Called AE" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding CalledAeTitle, UpdateSourceTrigger=PropertyChanged}"/></StackPanel><StackPanel Grid.Column="2"><TextBlock Text="Calling AE" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding CallingAeTitle, UpdateSourceTrigger=PropertyChanged}"/></StackPanel></Grid>
                         <TextBlock Text="AE Title содержит не более 16 символов." Style="{StaticResource HintStyle}"/>
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Таймаут подключения, сек." Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding ConnectionTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}"/><TextBlock Text="Сколько ждать установления DICOM-соединения. После таймаута PACS считается временно недоступным." Style="{StaticResource HintStyle}"/></StackPanel><StackPanel Grid.Column="2"><TextBlock Text="Таймаут отправки, сек." Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding SendTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}"/><TextBlock Text="Максимальное время C-STORE одного файла. После таймаута отправка считается неуспешной." Style="{StaticResource HintStyle}"/></StackPanel></Grid>
-                        <Button Content="Проверить C-ECHO" HorizontalAlignment="Left" Margin="0,8,0,0" Background="#2563EB" Foreground="White" Click="Echo_Click"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <Button Content="Проверить C-ECHO" Background="#2563EB" Foreground="White" Click="Echo_Click"/>
+                            <Button Content="Отправить сохранённые исследования…" Margin="10,0,0,0" Click="SendHistoricalStudiesForPacs_Click" ToolTip="Открыть мастер отправки сохранённых исследований на этот PACS"/>
+                        </StackPanel>
                     </StackPanel></ScrollViewer></Border>
                 </Grid>
             </TabItem>
@@ -129,9 +137,33 @@
                                 <StackPanel>
                                     <TextBlock Text="Название" Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"/>
                                     <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="14"/><ColumnDefinition/></Grid.ColumnDefinitions>
-                                        <StackPanel><TextBlock Text="Исходная папка" Style="{StaticResource LabelStyle}"/><ComboBox x:Name="EncodingFolderCombo" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding SourceFolderId, Mode=TwoWay}"/></StackPanel>
+                                        <StackPanel><TextBlock Text="Исходная папка" Style="{StaticResource LabelStyle}"/><ComboBox x:Name="EncodingFolderCombo" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding SourceFolderId, Mode=TwoWay}" SelectionChanged="EncodingFolderCombo_SelectionChanged"/></StackPanel>
                                         <StackPanel Grid.Column="2"><TextBlock Text="PACS назначения" Style="{StaticResource LabelStyle}"/><ComboBox x:Name="EncodingPacsCombo" SelectedValuePath="Id" DisplayMemberPath="Name" SelectedValue="{Binding DestinationPacsId, Mode=TwoWay}"/></StackPanel>
                                     </Grid>
+                                    <Border BorderBrush="#D7E0EC" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,8,0,5">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,3"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="Условия применения" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <Button Grid.Column="1" Content="Обновить значения" Padding="9,4" Margin="8,0,0,0" Click="RefreshConditionValues_Click"/>
+                                            </Grid>
+                                            <TextBlock Text="Правило применяется только к DICOM-файлам, соответствующим всем включённым условиям." Style="{StaticResource HintStyle}" Margin="0,0,0,8"/>
+                                            <Grid Margin="0,0,0,6">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                                <CheckBox x:Name="MatchModalityCheck" Content="Modality (0008,0060)" IsChecked="{Binding MatchModality, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                                <ComboBox x:Name="ModalityConditionCombo" Grid.Column="1" IsEditable="True" IsTextSearchEnabled="True" Text="{Binding Modality, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsChecked, ElementName=MatchModalityCheck}" ToolTip="Значения Modality в выбранной папке не найдены."/>
+                                            </Grid>
+                                            <Grid Margin="0,0,0,6">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                                <CheckBox x:Name="MatchStationNameCheck" Content="Station Name (0008,1010)" IsChecked="{Binding MatchStationName, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                                <ComboBox x:Name="StationNameConditionCombo" Grid.Column="1" IsEditable="True" IsTextSearchEnabled="True" Text="{Binding StationName, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsChecked, ElementName=MatchStationNameCheck}" ToolTip="Значения Station Name в выбранной папке не найдены."/>
+                                            </Grid>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                                <CheckBox x:Name="MatchManufacturerCheck" Content="Manufacturer (0008,0070)" IsChecked="{Binding MatchManufacturer, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                                <ComboBox x:Name="ManufacturerConditionCombo" Grid.Column="1" IsEditable="True" IsTextSearchEnabled="True" Text="{Binding Manufacturer, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsChecked, ElementName=MatchManufacturerCheck}" ToolTip="Значения Manufacturer в выбранной папке не найдены."/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
                                     <StackPanel x:Name="RepairFieldsPanel" Margin="0,4,0,0">
                                         <TextBlock Text="Поля для исправления" Style="{StaticResource LabelStyle}"/>
                                         <TextBlock Text="По умолчанию исправляется только ФИО пациента. Добавляйте остальные поля после диагностики." Style="{StaticResource HintStyle}" Margin="0,0,0,6"/>

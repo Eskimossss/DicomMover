@@ -22,6 +22,12 @@ public sealed class FolderMonitor
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _pacsCheckLocks = new(StringComparer.OrdinalIgnoreCase);
     private readonly EncodingRuleResolver _encodingRuleResolver = new();
     private readonly DicomTextTranscoder _dicomTextTranscoder = new();
+    internal Func<PacsSettings, DicomCStoreRequest, CancellationToken, Task<DicomStatus?>>? DicomSender { get; set; }
+    internal Func<PacsSettings, CancellationToken, Task<bool>>? PacsEchoChecker { get; set; }
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SuspiciousFileInfo> _suspiciousFiles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, EncodingRule> _oneTimeEncodingRules = new();
+
+    public void SetOneTimeEncodingRule(long deliveryId, EncodingRule rule) => _oneTimeEncodingRules[deliveryId] = rule;
 
     public event Action<string, bool, string?>? PacsAvailabilityChanged;
 
@@ -34,6 +40,7 @@ public sealed class FolderMonitor
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
+        TempFileManager.CleanStaleTempFiles();
         _logger.Info($"Мониторинг запущен. Активных папок: {_settings.WatchFolders.Count(f => f.Enabled)}.");
         try
         {
@@ -101,10 +108,11 @@ public sealed class FolderMonitor
         catch (SemaphoreFullException) { }
     }
 
-    private void Scan(WatchFolderSettings folder)
+    internal void Scan(WatchFolderSettings folder)
     {
         var destinations = _settings.PacsServers
             .Where(p => p.Enabled && folder.PacsIds.Contains(p.Id, StringComparer.OrdinalIgnoreCase))
+            .DistinctBy(p => (p.IpAddress.Trim().ToUpperInvariant(), p.Port, p.CalledAeTitle.Trim().ToUpperInvariant()))
             .ToArray();
         if (destinations.Length == 0) return;
         var started = System.Diagnostics.Stopwatch.StartNew();
@@ -137,12 +145,72 @@ public sealed class FolderMonitor
                 _database.EnsureDestinationsForExisting(key, destinations);
                 continue;
             }
-            if (!TryReadDicomMetadata(info.FullName, out var metadata))
+            var inspection = InspectDicomFile(info.FullName);
+            var fileProblemKey = $"file:{info.FullName.ToUpperInvariant()}";
+
+            if (inspection.Status is DicomFileInspectionStatus.TemporarilyInaccessible
+                                 or DicomFileInspectionStatus.AccessDenied
+                                 or DicomFileInspectionStatus.NetworkOrFileError)
             {
-                invalidFiles++;
-                MoveToBad(folder, info.FullName);
+                accessErrors++;
+                var state = _suspiciousFiles.GetOrAdd(info.FullName, _ => new SuspiciousFileInfo());
+                state.TempErrorCount++;
+                state.LastError = inspection.ErrorMessage;
+
+                if (state.TempErrorCount >= 3)
+                {
+                    _database.ReportProblem(
+                        fileProblemKey,
+                        inspection.Status == DicomFileInspectionStatus.AccessDenied ? "FileAccess" : "FileIO",
+                        info.Name,
+                        $"Повторяющаяся ошибка доступа к файлу ({state.TempErrorCount} проверок): {inspection.ErrorMessage}",
+                        info.FullName,
+                        targetId: folder.Id);
+                    _logger.Warn($"Файл {info.FullName} временно недоступен ({state.TempErrorCount} проверок): {inspection.ErrorMessage}");
+                }
                 continue;
             }
+
+            if (inspection.Status == DicomFileInspectionStatus.ConfirmedCorruptDicom)
+            {
+                invalidFiles++;
+                var state = _suspiciousFiles.GetOrAdd(info.FullName, _ => new SuspiciousFileInfo
+                {
+                    Length = info.Length,
+                    LastWriteTimeUtc = info.LastWriteTimeUtc
+                });
+
+                var isStableAcrossScans = (state.Length == info.Length && state.LastWriteTimeUtc == info.LastWriteTimeUtc);
+                if (isStableAcrossScans)
+                {
+                    state.CorruptScanCycles++;
+                }
+                else
+                {
+                    state.Length = info.Length;
+                    state.LastWriteTimeUtc = info.LastWriteTimeUtc;
+                    state.CorruptScanCycles = 1;
+                }
+                state.LastError = inspection.ErrorMessage;
+
+                if (isStableAcrossScans && state.CorruptScanCycles >= 3)
+                {
+                    _suspiciousFiles.TryRemove(info.FullName, out _);
+                    MoveToBad(folder, info.FullName, inspection.ErrorMessage ?? "Некорректный формат DICOM.");
+                }
+                else
+                {
+                    _logger.Warn($"Подозрение на повреждённый DICOM ({state.CorruptScanCycles}/3 проверок): {info.FullName}; {inspection.ErrorMessage}");
+                }
+                continue;
+            }
+
+            if (_suspiciousFiles.TryRemove(info.FullName, out _))
+            {
+                _database.ResolveProblem(fileProblemKey);
+            }
+
+            var metadata = inspection.Metadata!;
             if (folder.SendStudiesFromDate is { } fromDate &&
                 (!TryParseDicomDate(metadata.StudyDate, out var studyDate) || studyDate.Date < fromDate.Date))
             {
@@ -172,12 +240,13 @@ public sealed class FolderMonitor
                 $"ожидают стабильности {unstableFiles}, уже известны {knownFiles}, отфильтровано по дате {dateFilteredCount}, " +
                 $"некорректных {invalidFiles}, ошибок доступа {accessErrors}; время {started.Elapsed.TotalSeconds:0.###} сек.");
         }
+        CleanupEmptySubfolders(folder);
     }
 
     private static bool TryParseDicomDate(string? value, out DateTime date) =>
         DateTime.TryParseExact(value, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date);
 
-    private async Task SendAsync(DeliveryItem delivery, CancellationToken cancellationToken)
+    internal async Task SendAsync(DeliveryItem delivery, CancellationToken cancellationToken)
     {
         var pacs = _settings.PacsServers.FirstOrDefault(p =>
             p.Enabled && string.Equals(p.Id, delivery.PacsId, StringComparison.OrdinalIgnoreCase));
@@ -202,35 +271,87 @@ public sealed class FolderMonitor
         _database.MarkDeliverySending(delivery);
         _logger.Info($"Отправка на {pacs.Name}: {delivery.FilePath}");
         DicomStatus? responseStatus = null;
+        EncodingRule? encodingRule = null;
+        string? tempFilePath = null;
         try
         {
-            var encodingRule = _encodingRuleResolver.Resolve(_settings.EncodingRules, delivery.FolderId, delivery.PacsId);
+            if (!File.Exists(delivery.FilePath))
+            {
+                var errorMsg = $"Исходный файл не найден: {delivery.FilePath}";
+                _database.MarkDeliveryFailed(delivery, errorMsg, nextAttempt: null, exhausted: true);
+                _database.ReportProblem($"missing:{delivery.Id}", "FileNotFound", Path.GetFileName(delivery.FilePath), errorMsg, delivery.FilePath, delivery.QueueItemId, pacs.Id);
+                _logger.Error(errorMsg);
+                return;
+            }
+
+            var dbOverride = _database.GetDeliveryEncodingOverride(delivery.Id);
+            if (dbOverride.HasValue)
+            {
+                var (srcMode, trgEnc) = dbOverride.Value;
+                encodingRule = new EncodingRule
+                {
+                    Name = $"Разовое решение ({srcMode})",
+                    SourceFolderId = delivery.FolderId,
+                    DestinationPacsId = delivery.PacsId,
+                    ProcessingMode = EncodingProcessingMode.RepairInvalidTextElements,
+                    SourceEncodingMode = srcMode,
+                    TargetEncoding = trgEnc,
+                    RepairAllTextFields = true
+                };
+            }
+            else if (!_oneTimeEncodingRules.TryRemove(delivery.Id, out encodingRule))
+            {
+                encodingRule = _encodingRuleResolver.ResolveForFile(
+                    _settings.EncodingRules, delivery.FolderId, delivery.PacsId, delivery.FilePath);
+            }
             DicomTranscodeResult? transcodeResult = null;
             var shouldTransform = encodingRule is not null &&
                                   encodingRule.ProcessingMode != EncodingProcessingMode.NoChange &&
                                   encodingRule.TargetEncoding != TargetDicomEncoding.NoChange;
-            var request = !shouldTransform
-                ? new DicomCStoreRequest(delivery.FilePath)
-                : new DicomCStoreRequest((transcodeResult = _dicomTextTranscoder.Transcode(delivery.FilePath, encodingRule!)).File);
+            DicomCStoreRequest request;
+            if (!shouldTransform)
+            {
+                request = new DicomCStoreRequest(delivery.FilePath);
+            }
+            else
+            {
+                transcodeResult = _dicomTextTranscoder.Transcode(delivery.FilePath, encodingRule!);
+                tempFilePath = transcodeResult.TempFilePath;
+                request = !string.IsNullOrEmpty(tempFilePath) && File.Exists(tempFilePath)
+                    ? new DicomCStoreRequest(tempFilePath)
+                    : new DicomCStoreRequest(transcodeResult.File);
+            }
             request.OnResponseReceived = (_, response) => responseStatus = response.Status;
             if (transcodeResult is not null)
             {
                 _logger.Info($"Применено правило кодировки «{encodingRule!.Name}»: {transcodeResult.SourceDescription} → {transcodeResult.TargetDescription}; файл: {delivery.FilePath}");
-                _database.ResolveProblem($"delivery:{delivery.Id}");
             }
-            var client = DicomClientFactory.Create(
-                pacs.IpAddress, pacs.Port, false, pacs.CallingAeTitle, pacs.CalledAeTitle);
-            client.ClientOptions.ConnectionTimeoutInMs = pacs.ConnectionTimeoutSeconds * 1000;
-            await client.AddRequestAsync(request);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(pacs.SendTimeoutSeconds));
-            await client.SendAsync(timeout.Token, DicomClientCancellationMode.ImmediatelyReleaseAssociation);
+            if (DicomSender is not null)
+            {
+                responseStatus = await DicomSender(pacs, request, timeout.Token);
+            }
+            else
+            {
+                var client = DicomClientFactory.Create(
+                    pacs.IpAddress, pacs.Port, false, pacs.CallingAeTitle, pacs.CalledAeTitle);
+                client.ClientOptions.ConnectionTimeoutInMs = pacs.ConnectionTimeoutSeconds * 1000;
+                await client.AddRequestAsync(request);
+                await client.SendAsync(timeout.Token, DicomClientCancellationMode.ImmediatelyReleaseAssociation);
+            }
 
             if (responseStatus?.State is not (DicomState.Success or DicomState.Warning))
                 throw new InvalidOperationException($"PACS вернул статус: {responseStatus}");
 
+            UpdatePacsHealth(pacs, new PacsHealth(true, DateTime.UtcNow, null));
+
             _database.MarkDeliverySent(delivery, responseStatus.ToString());
-            _logger.Info($"Отправлено на {pacs.Name}: {delivery.FilePath}; {responseStatus}");
+            if (responseStatus.State == DicomState.Warning)
+                _logger.Warn($"Отправлено на {pacs.Name} с предупреждением: {delivery.FilePath}; {responseStatus}");
+            else
+                _logger.Info($"Отправлено на {pacs.Name}: {delivery.FilePath}; {responseStatus}");
+
             if (_database.AreAllDeliveriesSent(delivery.QueueItemId))
                 ProcessSourceAfterAllDeliveries(delivery);
         }
@@ -239,13 +360,70 @@ public sealed class FolderMonitor
             _database.MarkDeliveryPendingAfterCancellation(delivery);
             throw;
         }
+        catch (OperationCanceledException)
+        {
+            var attempts = delivery.AttemptCount + 1;
+            var exhausted = attempts >= _settings.MaxSendAttempts;
+            var retryDelay = GetRetryDelay(attempts);
+            var details = $"Таймаут отправки ({pacs.SendTimeoutSeconds} сек.)";
+            _database.MarkDeliveryFailed(delivery, details, exhausted ? null : DateTime.UtcNow.Add(retryDelay), exhausted);
+            if (exhausted)
+                _database.ReportProblem($"delivery:{delivery.Id}", "Delivery", $"{Path.GetFileName(delivery.FilePath)} → {pacs.Name}", details, delivery.FilePath, delivery.QueueItemId, pacs.Id);
+            _logger.Warn($"Ошибка таймаута DICOM на {pacs.Name}, попытка {attempts}/{_settings.MaxSendAttempts}; следующий повтор через {retryDelay.TotalMinutes:0} мин.");
+        }
+        catch (FileNotFoundException ex)
+        {
+            var details = $"Исходный файл не найден: {ex.FileName ?? delivery.FilePath}";
+            _database.MarkDeliveryFailed(delivery, details, nextAttempt: null, exhausted: true);
+            _database.ReportProblem($"missing:{delivery.Id}", "FileNotFound", Path.GetFileName(delivery.FilePath), details, delivery.FilePath, delivery.QueueItemId, pacs.Id);
+            _logger.Error(details);
+        }
+        catch (DirectoryNotFoundException ex)
+        {
+            var details = $"Каталог исходного файла не найден: {ex.Message}";
+            _database.MarkDeliveryFailed(delivery, details, nextAttempt: null, exhausted: true);
+            _database.ReportProblem($"missing:{delivery.Id}", "FileNotFound", Path.GetFileName(delivery.FilePath), details, delivery.FilePath, delivery.QueueItemId, pacs.Id);
+            _logger.Error(details);
+        }
+        catch (InsufficientDiskSpaceException ex)
+        {
+            var attempts = delivery.AttemptCount + 1;
+            var exhausted = attempts >= _settings.MaxSendAttempts;
+            var retryDelay = GetRetryDelay(attempts);
+            var details = ex.Message;
+            _database.MarkDeliveryFailed(delivery, details, exhausted ? null : DateTime.UtcNow.Add(retryDelay), exhausted);
+            _database.ReportProblem($"diskspace:{ex.DriveName}", "DiskSpace", $"Диск {ex.DriveName}", details, delivery.FilePath, delivery.QueueItemId, pacs.Id);
+            _logger.Error(details);
+        }
+        catch (IOException ex) when (!IsNetworkError(ex))
+        {
+            var attempts = delivery.AttemptCount + 1;
+            var exhausted = attempts >= _settings.MaxSendAttempts;
+            var retryDelay = GetRetryDelay(attempts);
+            var details = $"Временная ошибка чтения/блокировки файла: {ex.Message}";
+            _database.MarkDeliveryFailed(delivery, details, exhausted ? null : DateTime.UtcNow.Add(retryDelay), exhausted);
+            if (exhausted)
+                _database.ReportProblem($"delivery:{delivery.Id}", "FileAccess", $"{Path.GetFileName(delivery.FilePath)} → {pacs.Name}", details, delivery.FilePath, delivery.QueueItemId, pacs.Id);
+            _logger.Warn($"Временная ошибка файла на {pacs.Name}, попытка {attempts}/{_settings.MaxSendAttempts}; повтор через {retryDelay.TotalMinutes:0} мин.: {ex.Message}");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            var attempts = delivery.AttemptCount + 1;
+            var exhausted = attempts >= _settings.MaxSendAttempts;
+            var retryDelay = GetRetryDelay(attempts);
+            var details = $"Ошибка прав доступа к файлу: {ex.Message}";
+            _database.MarkDeliveryFailed(delivery, details, exhausted ? null : DateTime.UtcNow.Add(retryDelay), exhausted);
+            if (exhausted)
+                _database.ReportProblem($"delivery:{delivery.Id}", "FileAccess", $"{Path.GetFileName(delivery.FilePath)} → {pacs.Name}", details, delivery.FilePath, delivery.QueueItemId, pacs.Id);
+            _logger.Warn($"Ошибка доступа к файлу {delivery.FilePath}, попытка {attempts}/{_settings.MaxSendAttempts}: {ex.Message}");
+        }
         catch (DicomEncodingException ex)
         {
             var attempts = delivery.AttemptCount + 1;
             var exhausted = attempts >= _settings.MaxSendAttempts;
             var retryDelay = GetRetryDelay(attempts);
             var details = $"Не удалось выполнить перекодировку без потери данных. PACS: {pacs.Name}; тег: {ex.Tag?.ToString() ?? "не определён"}; " +
-                          $"режим: {(_encodingRuleResolver.Resolve(_settings.EncodingRules, delivery.FolderId, delivery.PacsId)?.ProcessingMode.ToString() ?? "не определён")}; " +
+                          $"режим: {(encodingRule?.ProcessingMode.ToString() ?? "не определён")}; " +
                           $"{ex.Message}" + (string.IsNullOrWhiteSpace(ex.ValueFragment) ? "" : $"; фрагмент: {ex.ValueFragment}");
             _database.MarkDeliveryFailed(delivery, details, exhausted ? null : DateTime.UtcNow.Add(retryDelay), exhausted);
             var problemKind = ex.FailureKind switch
@@ -258,25 +436,46 @@ public sealed class FolderMonitor
                 delivery.FilePath, delivery.QueueItemId, delivery.PacsId);
             _logger.Error(details);
         }
+        catch (Exception ex) when (IsNetworkError(ex))
+        {
+            UpdatePacsHealth(pacs, new PacsHealth(false, DateTime.UtcNow, ex.Message));
+            _database.MarkDeliveryUnavailable(delivery, $"PACS или сеть недоступны: {ex.Message}");
+            _logger.Warn($"PACS {pacs.Name} недоступен (сетевая ошибка); попытка файла не израсходована: {ex.Message}");
+        }
         catch (Exception ex)
         {
+            if (responseStatus is not null)
+                UpdatePacsHealth(pacs, new PacsHealth(true, DateTime.UtcNow, null));
+
             var attempts = delivery.AttemptCount + 1;
-            if (ex is not DicomFileException && responseStatus is null)
-            {
-                UpdatePacsHealth(pacs, new PacsHealth(false, DateTime.UtcNow, ex.Message));
-                _database.MarkDeliveryUnavailable(delivery, $"PACS или сеть недоступны: {ex.Message}");
-                _logger.Warn($"PACS {pacs.Name} недоступен; попытка файла не израсходована: {ex.Message}");
-                return;
-            }
             var exhausted = attempts >= _settings.MaxSendAttempts;
             var retryDelay = GetRetryDelay(attempts);
-            _database.MarkDeliveryFailed(
-                delivery,
-                ex is OperationCanceledException ? $"Таймаут отправки ({pacs.SendTimeoutSeconds} сек.)" : ex.Message,
-                exhausted ? null : DateTime.UtcNow.Add(retryDelay),
-                exhausted);
-            _logger.Warn($"Ошибка DICOM на {pacs.Name}, попытка {attempts}/{_settings.MaxSendAttempts}; следующий повтор через {retryDelay.TotalMinutes:0} мин.: {ex.Message}");
+            var details = responseStatus is not null
+                ? $"Отказ PACS C-STORE: {responseStatus}"
+                : ex.Message;
+            _database.MarkDeliveryFailed(delivery, details, exhausted ? null : DateTime.UtcNow.Add(retryDelay), exhausted);
+            if (exhausted)
+                _database.ReportProblem($"delivery:{delivery.Id}", "Delivery", $"{Path.GetFileName(delivery.FilePath)} → {pacs.Name}", details, delivery.FilePath, delivery.QueueItemId, pacs.Id);
+            _logger.Warn($"Сбой отправки на {pacs.Name}, попытка {attempts}/{_settings.MaxSendAttempts}; следующий повтор через {retryDelay.TotalMinutes:0} мин.: {details}");
         }
+        finally
+        {
+            if (!string.IsNullOrEmpty(tempFilePath))
+            {
+                try { File.Delete(tempFilePath); } catch { }
+            }
+        }
+    }
+
+    private static bool IsNetworkError(Exception ex)
+    {
+        if (ex is System.Net.Sockets.SocketException or DicomNetworkException or DicomAssociationRejectedException or DicomAssociationAbortedException)
+            return true;
+        if (ex.InnerException is not null && IsNetworkError(ex.InnerException))
+            return true;
+        if (ex is AggregateException agg)
+            return agg.Flatten().InnerExceptions.Any(IsNetworkError);
+        return false;
     }
 
     private async Task<PacsHealth> CheckPacsHealthAsync(PacsSettings pacs, CancellationToken cancellationToken, bool force = false)
@@ -289,17 +488,28 @@ public sealed class FolderMonitor
             if (!force && _pacsHealth.TryGetValue(pacs.Id, out var cached) &&
                 DateTime.UtcNow - cached.CheckedAtUtc < TimeSpan.FromSeconds(_settings.PacsHealthCheckSeconds))
                 return cached;
-            DicomStatus? status = null;
-            var request = new DicomCEchoRequest { OnResponseReceived = (_, response) => status = response.Status };
-            var client = DicomClientFactory.Create(pacs.IpAddress, pacs.Port, false, pacs.CallingAeTitle, pacs.CalledAeTitle);
-            client.ClientOptions.ConnectionTimeoutInMs = pacs.ConnectionTimeoutSeconds * 1000;
-            await client.AddRequestAsync(request);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(pacs.ConnectionTimeoutSeconds));
-            await client.SendAsync(timeout.Token, DicomClientCancellationMode.ImmediatelyReleaseAssociation);
-            var result = status?.State == DicomState.Success
-                ? new PacsHealth(true, DateTime.UtcNow, null)
-                : new PacsHealth(false, DateTime.UtcNow, $"C-ECHO: {status}");
+            PacsHealth result;
+            if (PacsEchoChecker is not null)
+            {
+                var available = await PacsEchoChecker(pacs, timeout.Token);
+                result = available
+                    ? new PacsHealth(true, DateTime.UtcNow, null)
+                    : new PacsHealth(false, DateTime.UtcNow, "C-ECHO: Unreachable");
+            }
+            else
+            {
+                DicomStatus? status = null;
+                var request = new DicomCEchoRequest { OnResponseReceived = (_, response) => status = response.Status };
+                var client = DicomClientFactory.Create(pacs.IpAddress, pacs.Port, false, pacs.CallingAeTitle, pacs.CalledAeTitle);
+                client.ClientOptions.ConnectionTimeoutInMs = pacs.ConnectionTimeoutSeconds * 1000;
+                await client.AddRequestAsync(request);
+                await client.SendAsync(timeout.Token, DicomClientCancellationMode.ImmediatelyReleaseAssociation);
+                result = status?.State == DicomState.Success
+                    ? new PacsHealth(true, DateTime.UtcNow, null)
+                    : new PacsHealth(false, DateTime.UtcNow, $"C-ECHO: {status}");
+            }
             LogDetailedPacsCheck(pacs, result, started.Elapsed);
             UpdatePacsHealth(pacs, result);
             if (!result.Available && !_settings.DetailedLogging)
@@ -419,7 +629,6 @@ public sealed class FolderMonitor
                 File.Move(delivery.FilePath, destination, overwrite: false);
                 _logger.Info($"Отправленный файл перемещён в архив: {destination}");
             }
-            if (folder.DeleteEmptySubfolders) RemoveEmptyParents(Path.GetDirectoryName(delivery.FilePath), folder.Path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -427,61 +636,101 @@ public sealed class FolderMonitor
         }
     }
 
-    private static void RemoveEmptyParents(string? directory, string root)
+    internal void CleanupEmptySubfolders(WatchFolderSettings folder)
     {
-        var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
-        while (!string.IsNullOrWhiteSpace(directory) && IsInside(rootFull, directory) &&
-               !string.Equals(Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar), rootFull, StringComparison.OrdinalIgnoreCase) &&
-               !Directory.EnumerateFileSystemEntries(directory).Any())
-        {
-            Directory.Delete(directory);
-            directory = Path.GetDirectoryName(directory);
-        }
-    }
+        if (!folder.DeleteEmptySubfolders || !folder.SearchSubfolders ||
+            folder.PostSendAction is not (PostSendAction.Archive or PostSendAction.Delete))
+            return;
 
-    private IEnumerable<string> EnumerateFilesSafely(WatchFolderSettings folder, Action onAccessError)
-    {
-        var pending = new Stack<string>();
-        pending.Push(folder.Path);
-        while (pending.Count > 0)
+        try
         {
-            var directory = pending.Pop();
-            string[] files;
-            try { files = Directory.GetFiles(directory); }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            if (!Directory.Exists(folder.Path)) return;
+
+            var rootFull = Path.GetFullPath(folder.Path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var delay = TimeSpan.FromMinutes(folder.EmptyFolderCleanupDelayMinutes);
+            var now = DateTime.UtcNow;
+
+            var subdirs = Directory.GetDirectories(rootFull, "*", SearchOption.AllDirectories)
+                .OrderByDescending(d => d.Length)
+                .ToList();
+
+            foreach (var dir in subdirs)
             {
-                onAccessError();
-                ReportInaccessible(directory, ex); continue;
-            }
-            _reportedInaccessible.Remove(directory);
-            _database.ResolveProblem(FolderProblemKey(directory));
-            foreach (var file in files)
-            {
-                var attributes = File.GetAttributes(file);
-                if ((attributes & (FileAttributes.Hidden | FileAttributes.Temporary)) == 0)
-                    yield return file;
-            }
-            if (!folder.SearchSubfolders) continue;
-            try
-            {
-                foreach (var child in Directory.GetDirectories(directory))
+                var dirFull = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+                // Защита от удаления корня
+                if (string.Equals(dirFull, rootFull, StringComparison.OrdinalIgnoreCase) ||
+                    !dirFull.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // Пропуск папки BAD
+                if (string.Equals(Path.GetFileName(dirFull), "BAD", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                try
                 {
-                    if (!string.Equals(Path.GetFileName(child), "BAD", StringComparison.OrdinalIgnoreCase))
-                        pending.Push(child);
+                    var dirInfo = new DirectoryInfo(dirFull);
+                    if (!dirInfo.Exists) continue;
+
+                    if (now - dirInfo.LastWriteTimeUtc < delay)
+                        continue;
+
+                    if (Directory.EnumerateFileSystemEntries(dirFull).Any())
+                        continue;
+
+                    if (_suspiciousFiles.Keys.Any(f => f.StartsWith(dirFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    Directory.Delete(dirFull, recursive: false);
+                    _logger.Info($"Удалена пустая подпапка (не изменялась {folder.EmptyFolderCleanupDelayMinutes} мин.): {dirFull}");
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Игнорируем DirectoryNotEmptyException или временную блокировку
                 }
             }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
-            {
-                onAccessError();
-                ReportInaccessible(directory, ex);
-            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Ошибки обхода пустых папок не должны нарушать работу сканера
         }
     }
 
-    private void ReportInaccessible(string directory, Exception ex)
+    private IEnumerable<string> EnumerateFilesSafely(WatchFolderSettings folder, Action onAccessError) =>
+        SafeDirectoryEnumerator.EnumerateFiles(
+            folder.Path,
+            folder.SearchSubfolders,
+            onDirectoryError: (dir, ex) =>
+            {
+                onAccessError();
+                ReportInaccessible(folder, dir, ex);
+            },
+            onDirectoryResolved: dir =>
+            {
+                _reportedInaccessible.Remove(dir);
+                _database.ResolveProblem(FolderProblemKey(dir));
+            });
+
+    private void ReportInaccessible(WatchFolderSettings folder, string directory, Exception ex)
     {
-        _database.ReportProblem(FolderProblemKey(directory), "Folder", Path.GetFileName(directory), ex.Message, directory);
-        if (_reportedInaccessible.Add(directory)) _logger.Warn($"Нет доступа к папке {directory}: {ex.Message}");
+        var isRoot = string.Equals(
+            Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar),
+            Path.GetFullPath(folder.Path).TrimEnd(Path.DirectorySeparatorChar),
+            StringComparison.OrdinalIgnoreCase);
+
+        var kind = isRoot ? "FolderRoot" : "FolderSub";
+        var title = isRoot ? folder.Name : Path.GetFileName(directory);
+        var details = isRoot
+            ? $"Корневая отслеживаемая папка недоступна: {ex.Message}"
+            : $"Подпапка недоступна: {ex.Message}";
+
+        _database.ReportProblem(FolderProblemKey(directory), kind, title, details, directory, targetId: folder.Id);
+        if (_reportedInaccessible.Add(directory))
+        {
+            _logger.Warn(isRoot
+                ? $"Корневая отслеживаемая папка «{folder.Name}» ({directory}) недоступна: {ex.Message}"
+                : $"Нет доступа к подпапке {directory}: {ex.Message}");
+        }
     }
 
     private static string FolderProblemKey(string directory) => $"folder:{Path.GetFullPath(directory).ToUpperInvariant()}";
@@ -496,7 +745,16 @@ public sealed class FolderMonitor
 
     private static bool TryReadDicomMetadata(string path, out DicomMetadata metadata)
     {
-        metadata = new DicomMetadata();
+        var result = InspectDicomFile(path);
+        metadata = result.Metadata ?? new DicomMetadata();
+        return result.Status == DicomFileInspectionStatus.ValidDicom;
+    }
+
+    internal static DicomFileInspectionResult InspectDicomFile(string path)
+    {
+        if (!File.Exists(path))
+            return new DicomFileInspectionResult(DicomFileInspectionStatus.NetworkOrFileError, null, $"Файл не существует: {path}");
+
         try
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -505,8 +763,22 @@ public sealed class FolderMonitor
                 Encoding.GetEncoding(1251),
                 stop: null,
                 FileReadOption.SkipLargeTags);
-            metadata.SopInstanceUid = file.Dataset.GetSingleValueOrDefault(DicomTag.SOPInstanceUID, string.Empty);
+
+            var sopInstanceUid = file.Dataset.GetSingleValueOrDefault(DicomTag.SOPInstanceUID, string.Empty);
             var sopClass = file.Dataset.GetSingleValueOrDefault(DicomTag.SOPClassUID, string.Empty);
+
+            if (string.IsNullOrWhiteSpace(sopInstanceUid) || string.IsNullOrWhiteSpace(sopClass))
+            {
+                return new DicomFileInspectionResult(
+                    DicomFileInspectionStatus.ConfirmedCorruptDicom,
+                    null,
+                    "Отсутствуют обязательные теги SOPInstanceUID или SOPClassUID.");
+            }
+
+            var metadata = new DicomMetadata
+            {
+                SopInstanceUid = sopInstanceUid
+            };
             var rawName = file.Dataset.GetSingleValueOrDefault(DicomTag.PatientName, string.Empty).Split('=', 2)[0];
             metadata.PatientName = string.Join(" ", rawName.Split('^').Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()));
             metadata.PatientId = file.Dataset.GetSingleValueOrDefault(DicomTag.PatientID, string.Empty);
@@ -515,12 +787,52 @@ public sealed class FolderMonitor
             metadata.StudyInstanceUid = file.Dataset.GetSingleValueOrDefault(DicomTag.StudyInstanceUID, string.Empty);
             metadata.AccessionNumber = file.Dataset.GetSingleValueOrDefault(DicomTag.AccessionNumber, string.Empty);
             metadata.StudyDate = file.Dataset.GetSingleValueOrDefault(DicomTag.StudyDate, string.Empty);
-            return !string.IsNullOrWhiteSpace(metadata.SopInstanceUid) && !string.IsNullOrWhiteSpace(sopClass);
+
+            return new DicomFileInspectionResult(DicomFileInspectionStatus.ValidDicom, metadata);
         }
-        catch { return false; }
+        catch (DicomFileException ex)
+        {
+            if (ex.InnerException is FileNotFoundException or DirectoryNotFoundException)
+                return new DicomFileInspectionResult(DicomFileInspectionStatus.NetworkOrFileError, null, ex.InnerException.Message);
+            if (ex.InnerException is UnauthorizedAccessException)
+                return new DicomFileInspectionResult(DicomFileInspectionStatus.AccessDenied, null, ex.InnerException.Message);
+            if (ex.InnerException is IOException)
+                return new DicomFileInspectionResult(DicomFileInspectionStatus.TemporarilyInaccessible, null, ex.InnerException.Message);
+
+            return new DicomFileInspectionResult(DicomFileInspectionStatus.ConfirmedCorruptDicom, null, ex.Message);
+        }
+        catch (DicomDataException ex)
+        {
+            if (ex.InnerException is UnauthorizedAccessException)
+                return new DicomFileInspectionResult(DicomFileInspectionStatus.AccessDenied, null, ex.InnerException.Message);
+            if (ex.InnerException is IOException)
+                return new DicomFileInspectionResult(DicomFileInspectionStatus.TemporarilyInaccessible, null, ex.InnerException.Message);
+
+            return new DicomFileInspectionResult(DicomFileInspectionStatus.ConfirmedCorruptDicom, null, ex.Message);
+        }
+        catch (FileNotFoundException ex)
+        {
+            return new DicomFileInspectionResult(DicomFileInspectionStatus.NetworkOrFileError, null, ex.Message);
+        }
+        catch (DirectoryNotFoundException ex)
+        {
+            return new DicomFileInspectionResult(DicomFileInspectionStatus.NetworkOrFileError, null, ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return new DicomFileInspectionResult(DicomFileInspectionStatus.AccessDenied, null, ex.Message);
+        }
+        catch (IOException ex)
+        {
+            return new DicomFileInspectionResult(DicomFileInspectionStatus.TemporarilyInaccessible, null, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return new DicomFileInspectionResult(DicomFileInspectionStatus.ConfirmedCorruptDicom, null, ex.Message);
+        }
     }
 
-    private void MoveToBad(WatchFolderSettings folder, string filePath)
+    private void MoveToBad(WatchFolderSettings folder, string filePath, string? reasonDetails = null)
     {
         try
         {
@@ -530,7 +842,9 @@ public sealed class FolderMonitor
             if (File.Exists(destination))
                 destination = Path.Combine(badDirectory, $"{Path.GetFileNameWithoutExtension(filePath)}-{DateTime.Now:yyyyMMddHHmmssfff}{Path.GetExtension(filePath)}");
             File.Move(filePath, destination);
-            const string reason = "Файл не распознан как корректный DICOM и перемещён в BAD.";
+            var reason = string.IsNullOrWhiteSpace(reasonDetails)
+                ? "Файл не распознан как корректный DICOM и перемещён в BAD."
+                : $"Файл не распознан как корректный DICOM и перемещён в BAD: {reasonDetails}";
             _database.RecordRejectedFile(filePath, destination, reason);
             _database.ReportProblem(
                 $"bad:{Path.GetFullPath(destination).ToUpperInvariant()}",
@@ -539,7 +853,7 @@ public sealed class FolderMonitor
                 reason,
                 destination,
                 targetId: folder.Id);
-            _logger.Warn($"Некорректный DICOM перемещён в BAD: {destination}");
+            _logger.Warn($"Некорректный DICOM перемещён из «{filePath}» в BAD: «{destination}»; причина: {reason}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -556,3 +870,26 @@ public sealed class FolderMonitor
     private static string BuildKey(FileInfo info) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
         $"{info.FullName.ToUpperInvariant()}|{info.Length}|{info.LastWriteTimeUtc.Ticks}")));
 }
+
+internal sealed class SuspiciousFileInfo
+{
+    public long Length { get; set; }
+    public DateTime LastWriteTimeUtc { get; set; }
+    public int CorruptScanCycles { get; set; }
+    public int TempErrorCount { get; set; }
+    public string? LastError { get; set; }
+}
+
+public enum DicomFileInspectionStatus
+{
+    ValidDicom,
+    ConfirmedCorruptDicom,
+    TemporarilyInaccessible,
+    AccessDenied,
+    NetworkOrFileError
+}
+
+public sealed record DicomFileInspectionResult(
+    DicomFileInspectionStatus Status,
+    DicomMetadata? Metadata = null,
+    string? ErrorMessage = null);

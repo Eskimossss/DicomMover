@@ -25,7 +25,18 @@
                             <TextBlock x:Name="VersionText" Foreground="#667085"/>
                         </StackPanel>
                     </StackPanel>
-                    <TextBlock Text="Portable-программа для автоматической отправки DICOM-файлов на PACS." TextWrapping="Wrap" Margin="0,0,0,18"/>
+                    <TextBlock Text="Portable-программа для автоматической отправки DICOM-файлов на PACS." TextWrapping="Wrap" Margin="0,0,0,14"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,18" VerticalAlignment="Center">
+                        <Grid Width="22" Height="22" Margin="0,0,9,0">
+                            <Ellipse Fill="#229ED9"/>
+                            <Path Data="M 4,10 L 18,4 L 14,18 L 10.5,13.5 L 8,16 L 8.5,12.5 L 15,6.5 L 7,11.5 Z"
+                                  Fill="White" Stretch="Fill" Margin="3.5"/>
+                        </Grid>
+                        <TextBlock VerticalAlignment="Center">
+                            <Run Text="Связаться с разработчиком: "/>
+                            <Hyperlink Click="TelegramLink_Click" Foreground="#168AC0" ToolTip="Открыть Telegram: https://t.me/eskimossss">@eskimossss</Hyperlink>
+                        </TextBlock>
+                    </StackPanel>
                     <TextBlock Text="Папка программы" FontWeight="SemiBold"/><TextBox x:Name="ProgramFolderText" IsReadOnly="True"/>
                     <TextBlock Text="База данных SQLite" FontWeight="SemiBold"/><TextBox x:Name="DatabasePathText" IsReadOnly="True"/>
                     <TextBlock Text="Папка журналов" FontWeight="SemiBold"/><TextBox x:Name="LogsFolderText" IsReadOnly="True"/>

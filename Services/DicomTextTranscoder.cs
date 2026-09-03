@@ -43,25 +43,35 @@ public sealed class DicomTextTranscoder
                 analyses, plan, [], required);
 
         var result = BuildTransformedDicom(sourcePath, rule);
-        var verified = analyzer.Analyze(result.File, SourceEncodingMode.Automatic, Path.GetFileName(sourcePath));
-        var finalValues = new List<DicomPreviewValue>();
-        foreach (var before in sourceElements)
+        try
         {
-            if (!IsSelected(rule, before.TagId) || before.Status == DicomTextElementStatus.Empty) continue;
-            var after = verified.FirstOrDefault(x => x.TagId == before.TagId && x.Path == before.Path);
-            if (after is null) continue;
-            var sourceValue = before.Status == DicomTextElementStatus.Recoverable ? before.RepairedValue! : before.DisplayValue;
-            finalValues.Add(new(before.Path, before.TagId, before.Tag, before.FieldName,
-                before.DetectedEncoding ?? before.DeclaredCharset,
-                sourceValue, after.DisplayValue, sourceValue));
+            var verified = analyzer.Analyze(result.File, SourceEncodingMode.Automatic, Path.GetFileName(sourcePath));
+            var finalValues = new List<DicomPreviewValue>();
+            foreach (var before in sourceElements)
+            {
+                if (!IsSelected(rule, before.TagId) || before.Status == DicomTextElementStatus.Empty) continue;
+                var after = verified.FirstOrDefault(x => x.TagId == before.TagId && x.Path == before.Path);
+                if (after is null) continue;
+                var sourceValue = before.Status == DicomTextElementStatus.Recoverable ? before.RepairedValue! : before.DisplayValue;
+                finalValues.Add(new(before.Path, before.TagId, before.Tag, before.FieldName,
+                    before.DetectedEncoding ?? before.DeclaredCharset,
+                    sourceValue, after.DisplayValue, sourceValue));
+            }
+            return new(Path.GetFileName(sourcePath), DisplayCharset(source.Dataset), DisplayCharset(result.File.Dataset),
+                analyses, "✓ Преобразование безопасно. Проверен DICOM-файл после сохранения.", finalValues, []);
         }
-        return new(Path.GetFileName(sourcePath), DisplayCharset(source.Dataset), DisplayCharset(result.File.Dataset),
-            analyses, "✓ Преобразование безопасно. Проверен DICOM-файл после сохранения.", finalValues, []);
+        finally
+        {
+            if (!string.IsNullOrEmpty(result.TempFilePath))
+            {
+                try { File.Delete(result.TempFilePath); } catch { }
+            }
+        }
     }
 
     public DicomTranscodeResult BuildTransformedDicom(string sourcePath, EncodingRule rule)
     {
-        var file = DicomFile.Open(sourcePath, FileReadOption.ReadAll);
+        var file = DicomFile.Open(sourcePath, FileReadOption.Default);
         var analyzer = new DicomTextElementAnalyzer();
         var sourceMode = EffectiveSourceMode(rule.SourceEncodingMode);
         var located = analyzer.AnalyzeLocated(file.Dataset, Path.GetFileName(sourcePath), sourceMode);
@@ -121,28 +131,52 @@ public sealed class DicomTextTranscoder
             }
         }
 
-        using var check = new MemoryStream();
-        file.Save(check);
-        check.Position = 0;
-        // Контрольное чтение проверяет сериализованный текст и charset. Повторная копия
-        // Pixel Data для этой проверки не нужна; полноценный Dataset остаётся в file.
-        var verified = DicomFile.Open(check, FileReadOption.SkipLargeTags);
-        var verification = analyzer.Analyze(verified, SourceEncodingMode.Automatic);
-        if (verification.Any(x => x.Status is DicomTextElementStatus.Ambiguous or DicomTextElementStatus.Recoverable))
-            throw new DicomEncodingException("После преобразования DICOM остались несогласованные текстовые элементы.");
-        if (verification.Count != located.Count)
-            throw new DicomEncodingException("Контрольное чтение изменило набор текстовых DICOM-элементов.");
-        for (var i = 0; i < located.Count; i++)
+        var tempFilePath = TempFileManager.CreateTempFilePath();
+        try
         {
-            var expected = located[i].Analysis.Status == DicomTextElementStatus.Recoverable
-                ? located[i].Analysis.RepairedValue! : located[i].Analysis.DisplayValue;
-            var actual = verification[i].DisplayValue;
-            if (!string.Equals(expected, actual, StringComparison.Ordinal))
-                throw new DicomEncodingException("После физической сериализации значение текстового поля изменилось.",
-                    located[i].Element.Tag, SafeFragment(actual));
+            TempFileManager.EnsureSufficientDiskSpace(tempFilePath, new FileInfo(sourcePath).Length);
+            file.Save(tempFilePath);
+
+            // Контрольное повторное чтение проверяет возможность открытия, сериализованный текст и charset
+            // Используется SkipLargeTags для исключения загрузки Pixel Data в оперативную память
+            var verified = DicomFile.Open(tempFilePath, FileReadOption.SkipLargeTags);
+
+            var verifiedCharset = verified.Dataset.GetSingleValueOrDefault(DicomTag.SpecificCharacterSet, string.Empty);
+            if (!string.Equals(verifiedCharset, targetCharset, StringComparison.OrdinalIgnoreCase))
+                throw new DicomEncodingException($"После записи тег SpecificCharacterSet ({verifiedCharset}) не совпадает с целевым ({targetCharset}).");
+
+            var verification = analyzer.Analyze(verified, SourceEncodingMode.Automatic);
+            if (verification.Any(x => x.Status is DicomTextElementStatus.Ambiguous or DicomTextElementStatus.Recoverable))
+                throw new DicomEncodingException("После преобразования DICOM остались несогласованные текстовые элементы.");
+            if (verification.Count != located.Count)
+                throw new DicomEncodingException("Контрольное чтение изменило набор текстовых DICOM-элементов.");
+            for (var i = 0; i < located.Count; i++)
+            {
+                var expected = located[i].Analysis.Status == DicomTextElementStatus.Recoverable
+                    ? located[i].Analysis.RepairedValue! : located[i].Analysis.DisplayValue;
+                var actual = verification[i].DisplayValue;
+                if (!string.Equals(expected, actual, StringComparison.Ordinal))
+                    throw new DicomEncodingException("После физической сериализации значение текстового поля изменилось.",
+                        located[i].Element.Tag, SafeFragment(actual));
+            }
+            ValidateNoReplacementCharacters(verified.Dataset);
+
+            // Проверка наличия и целостности файла на диске без полной загрузки Pixel Data в RAM:
+            if (file.Dataset.Contains(DicomTag.PixelData))
+            {
+                var sourceLength = new FileInfo(sourcePath).Length;
+                var tempLength = new FileInfo(tempFilePath).Length;
+                if (tempLength < sourceLength * 0.8)
+                    throw new DicomEncodingException($"Контрольное чтение: размер файла ({tempLength} байт) меньше ожидаемого ({sourceLength} байт), Pixel Data повреждён или не записан.");
+            }
+
+            return new DicomTranscodeResult(file, SourceModeDescription(sourceMode), targetCharset, repaired, tempFilePath);
         }
-        ValidateNoReplacementCharacters(verified.Dataset);
-        return new DicomTranscodeResult(file, SourceModeDescription(sourceMode), targetCharset, repaired);
+        catch
+        {
+            try { File.Delete(tempFilePath); } catch { }
+            throw;
+        }
     }
 
     private static string ValidateRepairPlan(IReadOnlyList<DicomTextElementAnalysis> analyses, EncodingRule rule)
@@ -169,8 +203,11 @@ public sealed class DicomTextTranscoder
         return $"✓ Преобразование безопасно. Будет исправлено элементов: {analyses.Count(x => x.Status == DicomTextElementStatus.Recoverable)}. Кодировка при отправке: {targetCharset}.";
     }
 
-    private static bool IsSelected(EncodingRule rule, string tagId) => rule.RepairAllTextFields ||
-        rule.SelectedTextFields is null || rule.SelectedTextFields.Contains(tagId, StringComparer.OrdinalIgnoreCase);
+    private static bool IsSelected(EncodingRule rule, string tagId) =>
+        rule.RepairAllTextFields ||
+        rule.SourceEncodingMode is SourceEncodingMode.ForceWindows1251 or SourceEncodingMode.ForceUtf8 or SourceEncodingMode.ForceIso88595 ||
+        rule.SelectedTextFields is null ||
+        rule.SelectedTextFields.Contains(tagId, StringComparer.OrdinalIgnoreCase);
 
     private static SourceEncodingMode EffectiveSourceMode(SourceEncodingMode mode) =>
         mode == SourceEncodingMode.UseFallbackWhenCharsetEmpty ? SourceEncodingMode.Automatic : mode;

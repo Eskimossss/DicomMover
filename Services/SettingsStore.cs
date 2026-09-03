@@ -30,7 +30,7 @@ public sealed class SettingsStore
         var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path), JsonOptions)
             ?? throw new InvalidDataException("Файл настроек пуст.");
         settings.NormalizeLegacy();
-        settings.Validate();
+        settings.Validate(throwOnDuplicatePacs: false);
         return settings;
     }
 

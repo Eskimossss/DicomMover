@@ -35,9 +35,11 @@
             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock Text="С " VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/>
-                <DatePicker x:Name="FromDatePicker" Width="145" SelectedDateChanged="DatePicker_SelectedDateChanged"/>
-                <TextBlock Text=" по " Margin="12,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/>
-                <DatePicker x:Name="ToDatePicker" Width="145" SelectedDateChanged="DatePicker_SelectedDateChanged"/>
+                <DatePicker x:Name="FromDatePicker" Width="130" SelectedDateChanged="DatePicker_SelectedDateChanged"/>
+                <TextBlock Text=" по " Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/>
+                <DatePicker x:Name="ToDatePicker" Width="130" SelectedDateChanged="DatePicker_SelectedDateChanged"/>
+                <TextBlock Text="PACS:" Margin="16,0,8,0" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/>
+                <ComboBox x:Name="PacsFilterCombo" Width="180" DisplayMemberPath="Name" SelectionChanged="PacsFilterCombo_SelectionChanged"/>
             </StackPanel>
             <Button Grid.Column="1" Content="Сегодня" Padding="16,7" Click="TodayButton_Click"/>
         </Grid>
@@ -46,16 +48,16 @@
 
         <UniformGrid Grid.Row="2" Columns="4" Margin="0,0,0,10">
             <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,7" Margin="0,0,8,0">
-                <StackPanel><TextBlock Text="НАЙДЕНО" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="FoundText" Text="0" FontSize="18" FontWeight="SemiBold"/></StackPanel>
+                <StackPanel><TextBlock Text="Исследований" Foreground="{DynamicResource MutedBrush}" FontSize="11" FontWeight="SemiBold"/><TextBlock x:Name="FoundText" Text="0" FontSize="18" FontWeight="SemiBold"/></StackPanel>
             </Border>
             <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,7" Margin="0,0,8,0">
-                <StackPanel><TextBlock Text="ОТПРАВЛЕНО" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="SentText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource SuccessTextBrush}"/></StackPanel>
+                <StackPanel><TextBlock Text="Успешных отправок" Foreground="{DynamicResource MutedBrush}" FontSize="11" FontWeight="SemiBold"/><TextBlock x:Name="SentText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource SuccessTextBrush}"/></StackPanel>
             </Border>
             <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,7" Margin="0,0,8,0">
-                <StackPanel><TextBlock Text="НЕ ОТПРАВЛЕНО" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="ErrorsText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource ErrorTextBrush}"/></StackPanel>
+                <StackPanel><TextBlock Text="Не отправлено" Foreground="{DynamicResource MutedBrush}" FontSize="11" FontWeight="SemiBold"/><TextBlock x:Name="ErrorsText" Text="0" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource ErrorTextBrush}"/></StackPanel>
             </Border>
             <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,7">
-                <StackPanel><TextBlock Text="ПОПЫТОК" Foreground="{DynamicResource MutedBrush}" FontSize="10"/><TextBlock x:Name="AttemptsText" Text="0" FontSize="18" FontWeight="SemiBold"/></StackPanel>
+                <StackPanel><TextBlock Text="Попыток отправки" Foreground="{DynamicResource MutedBrush}" FontSize="11" FontWeight="SemiBold"/><TextBlock x:Name="AttemptsText" Text="0" FontSize="18" FontWeight="SemiBold"/></StackPanel>
             </Border>
         </UniformGrid>
 

@@ -54,6 +54,12 @@ public sealed class EncodingRule
     // null означает правило repair предыдущей версии: исправлять все безопасно определённые поля.
     public List<string>? SelectedTextFields { get; set; }
     public bool RepairAllTextFields { get; set; }
+    public bool MatchModality { get; set; }
+    public string? Modality { get; set; }
+    public bool MatchStationName { get; set; }
+    public string? StationName { get; set; }
+    public bool MatchManufacturer { get; set; }
+    public string? Manufacturer { get; set; }
 
     public static EncodingRule CreateNew(string name, string? sourceFolderId, string destinationPacsId) => new()
     {
@@ -88,6 +94,18 @@ public sealed class PacsSettings
     public int SendTimeoutSeconds { get; set; } = 120;
 
     public PacsSettings Copy() => (PacsSettings)MemberwiseClone();
+
+    public static bool IsEndpointDuplicate(PacsSettings a, PacsSettings b)
+    {
+        if (ReferenceEquals(a, b)) return false;
+        var hostA = a.IpAddress?.Trim() ?? string.Empty;
+        var hostB = b.IpAddress?.Trim() ?? string.Empty;
+        var aeA = a.CalledAeTitle?.Trim() ?? string.Empty;
+        var aeB = b.CalledAeTitle?.Trim() ?? string.Empty;
+        return a.Port == b.Port &&
+               string.Equals(hostA, hostB, StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(aeA, aeB, StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 public sealed class WatchFolderSettings
@@ -102,6 +120,7 @@ public sealed class WatchFolderSettings
     public string? ArchiveFolder { get; set; }
     public bool PreserveSubfolders { get; set; } = true;
     public bool DeleteEmptySubfolders { get; set; }
+    public int EmptyFolderCleanupDelayMinutes { get; set; } = 30;
     public DateTime? SendStudiesFromDate { get; set; }
 
     public WatchFolderSettings Copy() => new()
@@ -116,6 +135,7 @@ public sealed class WatchFolderSettings
         ArchiveFolder = ArchiveFolder,
         PreserveSubfolders = PreserveSubfolders,
         DeleteEmptySubfolders = DeleteEmptySubfolders,
+        EmptyFolderCleanupDelayMinutes = EmptyFolderCleanupDelayMinutes,
         SendStudiesFromDate = SendStudiesFromDate
     };
 }
@@ -163,6 +183,9 @@ public sealed class AppSettings
         EncodingRules ??= [];
         foreach (var rule in EncodingRules)
         {
+            rule.Modality = rule.Modality?.Trim();
+            rule.StationName = rule.StationName?.Trim();
+            rule.Manufacturer = rule.Manufacturer?.Trim();
             rule.SelectedTextFields = rule.SelectedTextFields?.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (!Enum.IsDefined(rule.SourceEncodingMode) || rule.SourceEncodingMode == SourceEncodingMode.UseFallbackWhenCharsetEmpty)
                 rule.SourceEncodingMode = SourceEncodingMode.Automatic;
@@ -253,7 +276,70 @@ public sealed class AppSettings
         LogFile = LogFile
     };
 
-    public void Validate()
+    public static AppSettings CreateDefaultSafe()
+    {
+        var pacs = new PacsSettings
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = "PACS Server",
+            IpAddress = "127.0.0.1",
+            Port = 104,
+            CalledAeTitle = "PACS",
+            CallingAeTitle = "DICOMMOVER",
+            Enabled = false
+        };
+
+        var folder = new WatchFolderSettings
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = "Входная папка DICOM",
+            Path = @"C:\DicomIn",
+            PacsIds = [pacs.Id],
+            Enabled = false
+        };
+
+        return new AppSettings
+        {
+            WatchFolders = [folder],
+            PacsServers = [pacs],
+            DatabaseFile = @"data\dicommover.db",
+            LogFile = @"logs\dicommover.log"
+        };
+    }
+
+    public PacsSettings? FindDuplicatePacs(PacsSettings candidate, string? excludeId = null)
+    {
+        if (string.IsNullOrWhiteSpace(candidate.IpAddress) || candidate.Port <= 0 || string.IsNullOrWhiteSpace(candidate.CalledAeTitle))
+            return null;
+        return PacsServers.FirstOrDefault(p =>
+            (excludeId is null || !string.Equals(p.Id, excludeId, StringComparison.OrdinalIgnoreCase)) &&
+            !string.Equals(p.Id, candidate.Id, StringComparison.OrdinalIgnoreCase) &&
+            PacsSettings.IsEndpointDuplicate(p, candidate));
+    }
+
+    public List<(PacsSettings Duplicate, PacsSettings Original)> FindAllDuplicatePacs()
+    {
+        var duplicates = new List<(PacsSettings, PacsSettings)>();
+        for (var i = 0; i < PacsServers.Count; i++)
+        {
+            var p1 = PacsServers[i];
+            if (string.IsNullOrWhiteSpace(p1.IpAddress) || p1.Port <= 0 || string.IsNullOrWhiteSpace(p1.CalledAeTitle))
+                continue;
+            for (var j = i + 1; j < PacsServers.Count; j++)
+            {
+                var p2 = PacsServers[j];
+                if (PacsSettings.IsEndpointDuplicate(p1, p2))
+                {
+                    duplicates.Add((p2, p1));
+                }
+            }
+        }
+        return duplicates;
+    }
+
+    public void Validate() => Validate(throwOnDuplicatePacs: true);
+
+    public void Validate(bool throwOnDuplicatePacs)
     {
         NormalizeLegacy();
         if (WatchFolders.Count == 0 || PacsServers.Count == 0)
@@ -267,6 +353,21 @@ public sealed class AppSettings
 
         var duplicatePacsId = PacsServers.GroupBy(p => p.Id, StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() > 1);
         if (duplicatePacsId is not null) throw new InvalidDataException("Обнаружены повторяющиеся идентификаторы PACS.");
+
+        if (throwOnDuplicatePacs)
+        {
+            for (var i = 0; i < PacsServers.Count; i++)
+            {
+                var p1 = PacsServers[i];
+                for (var j = i + 1; j < PacsServers.Count; j++)
+                {
+                    var p2 = PacsServers[j];
+                    if (PacsSettings.IsEndpointDuplicate(p1, p2))
+                        throw new InvalidDataException($"PACS с такими параметрами уже существует: «{p1.Name}». Измените AE Title, адрес или порт.");
+                }
+            }
+        }
+
         var enabledPacsIds = PacsServers.Where(p => p.Enabled).Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var pacs in PacsServers)
         {
@@ -286,6 +387,8 @@ public sealed class AppSettings
                 throw new InvalidDataException($"Для папки «{folder.Name}» не выбран ни один включённый PACS.");
             if (folder.PostSendAction == PostSendAction.Archive && string.IsNullOrWhiteSpace(folder.ArchiveFolder))
                 throw new InvalidDataException($"Для папки «{folder.Name}» не задан архив.");
+            if (folder.EmptyFolderCleanupDelayMinutes is < 5 or > 1440)
+                throw new InvalidDataException($"Для папки «{folder.Name}»: задержка удаления пустых подпапок должна быть от 5 до 1440 минут.");
         }
 
         foreach (var rule in EncodingRules)
@@ -296,12 +399,18 @@ public sealed class AppSettings
                 throw new InvalidDataException($"В правиле кодировки «{rule.Name}» выбран несуществующий PACS.");
             if (!WatchFolders.Any(f => string.Equals(f.Id, rule.SourceFolderId, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidDataException($"В правиле кодировки «{rule.Name}» выбрана несуществующая папка.");
+            if (rule.MatchModality && string.IsNullOrWhiteSpace(rule.Modality))
+                throw new InvalidDataException($"Укажите значение для условия Modality в правиле «{rule.Name}».");
+            if (rule.MatchStationName && string.IsNullOrWhiteSpace(rule.StationName))
+                throw new InvalidDataException($"Укажите значение для условия Station Name в правиле «{rule.Name}».");
+            if (rule.MatchManufacturer && string.IsNullOrWhiteSpace(rule.Manufacturer))
+                throw new InvalidDataException($"Укажите значение для условия Manufacturer в правиле «{rule.Name}».");
         }
         var duplicateRule = EncodingRules.Where(r => r.Enabled)
-            .GroupBy(r => $"{r.SourceFolderId}|{r.DestinationPacsId}", StringComparer.OrdinalIgnoreCase)
+            .GroupBy(RuleSignature, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault(g => g.Count() > 1);
         if (duplicateRule is not null)
-            throw new InvalidDataException("Нельзя создать два активных правила кодировки для одной пары «папка + PACS».");
+            throw new InvalidDataException("Нельзя создать два одинаковых активных правила кодировки для одной пары «папка + PACS» и одинаковых условий.");
 
         var roots = WatchFolders.Where(f => f.Enabled)
             .Select(f => (f.Name, Path: Path.GetFullPath(f.Path).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar))
@@ -314,4 +423,10 @@ public sealed class AppSettings
                 throw new InvalidDataException($"Папки «{roots[i].Name}» и «{roots[j].Name}» пересекаются. Оставьте только один корневой путь; поиск в подпапках продолжит работать.");
         }
     }
+
+    private static string RuleSignature(EncodingRule rule) => string.Join('|',
+        rule.SourceFolderId, rule.DestinationPacsId,
+        rule.MatchModality ? $"M:{rule.Modality?.Trim()}" : "M:-",
+        rule.MatchStationName ? $"S:{rule.StationName?.Trim()}" : "S:-",
+        rule.MatchManufacturer ? $"F:{rule.Manufacturer?.Trim()}" : "F:-");
 }

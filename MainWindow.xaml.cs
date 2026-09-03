@@ -22,7 +22,8 @@ public partial class MainWindow : Window
 {
     private readonly ObservableCollection<QueueRow> _rows = new();
     private readonly ObservableCollection<ProblemRow> _problems = new();
-    private readonly Queue<(DateTime Timestamp, string Line)> _visibleLogLines = new();
+    private readonly UiLogBuffer _logBuffer = new();
+    private readonly ObservableCollection<UiLogEntry> _visibleLogItems = new();
     private readonly DispatcherTimer _timer;
     private readonly SettingsStore _settingsStore;
     private System.Windows.Forms.NotifyIcon? _trayIcon;
@@ -45,13 +46,23 @@ public partial class MainWindow : Window
         InitializeComponent();
         _isUiInitialized = true;
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-        Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+        Directory.SetCurrentDirectory(AppPaths.BaseDirectory);
         new DicomSetupBuilder().RegisterServices(services => services.AddFellowOakDicom()).Build();
-        _settingsStore = new SettingsStore(AppPaths.Resolve("appsettings.json"));
+        var configPath = AppPaths.Resolve("appsettings.json");
+        _settingsStore = new SettingsStore(configPath);
 
         try
         {
-            _settings = _settingsStore.Load();
+            if (!File.Exists(configPath))
+            {
+                _settings = AppSettings.CreateDefaultSafe();
+                _settingsStore.Save(_settings);
+            }
+            else
+            {
+                _settings = _settingsStore.Load();
+            }
+
             if (_settings.WatchFolders.Count > 0 && _settings.PacsServers.Count > 0)
                 BuildServices(_settings.Copy());
             ApplyWindowsStartup();
@@ -64,6 +75,7 @@ public partial class MainWindow : Window
 
         QueueGrid.ItemsSource = _rows;
         ProblemsGrid.ItemsSource = _problems;
+        LogList.ItemsSource = _visibleLogItems;
         PopulatePacsFilter();
         ApplyColumnSettings();
         UpdateConfigurationSummary();
@@ -221,6 +233,13 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { hasErrors = true; lines.Add($"✗ SQLite: {ex.Message}"); }
 
+        var duplicatePacs = _settings.FindAllDuplicatePacs();
+        foreach (var (dup, orig) in duplicatePacs)
+        {
+            hasErrors = true;
+            lines.Add($"✗ PACS «{dup.Name}»: дублирует параметры «{orig.Name}» ({dup.IpAddress}:{dup.Port}, {dup.CalledAeTitle})");
+        }
+
         var text = string.Join(Environment.NewLine, lines);
         if (!hasErrors)
         {
@@ -304,6 +323,10 @@ public partial class MainWindow : Window
     private async Task OpenSettingsAsync(Action<SettingsWindow>? configureWindow = null)
     {
         var window = new SettingsWindow(_settings) { Owner = this };
+        window.RequestSendHistoricalStudies += pacs =>
+        {
+            Dispatcher.BeginInvoke(() => OpenHistoryWizard(pacs.Id, window));
+        };
         configureWindow?.Invoke(window);
         if (window.ShowDialog() != true) return;
         var wasRunning = _monitorTask is not null;
@@ -550,6 +573,18 @@ public partial class MainWindow : Window
         RefreshQueue();
     }
 
+    private void OpenHistoryWizard(string? preselectedPacsId = null, Window? owner = null)
+    {
+        if (_database is null) return;
+        var wizard = new HistorySendingWizardWindow(_settings, _database, preselectedPacsId) { Owner = owner ?? this };
+        if (wizard.ShowDialog() == true && wizard.DeliveriesCreated)
+        {
+            _monitor?.WakeDeliveryLoop();
+            RefreshQueue();
+            _logger?.Info(RussianPluralization.FormatStudiesEnqueued(wizard.EnqueuedCount));
+        }
+    }
+
     private void ClearHistoryButton_Click(object sender, RoutedEventArgs e)
     {
         if (_database is null) return;
@@ -577,8 +612,8 @@ public partial class MainWindow : Window
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
             return;
 
-        _visibleLogLines.Clear();
-        LogList.Items.Clear();
+        _logBuffer.Clear();
+        _visibleLogItems.Clear();
         LogCountText.Text = "0 записей";
         LogErrorBadge.Visibility = Visibility.Collapsed;
     }
@@ -627,6 +662,35 @@ public partial class MainWindow : Window
         catch (Exception ex) { _logger?.Error($"Не удалось обновить очередь: {ex.Message}"); }
     }
 
+    private void CheckConfigurationProblems()
+    {
+        if (_database is null) return;
+        var duplicates = _settings.FindAllDuplicatePacs();
+        var activeDuplicateIds = duplicates.Select(d => d.Duplicate.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var activeProblem in _database.GetActiveProblems())
+        {
+            if (activeProblem.Key.StartsWith("config:duplicate_pacs:", StringComparison.Ordinal))
+            {
+                var pacsId = activeProblem.Key["config:duplicate_pacs:".Length..];
+                if (!activeDuplicateIds.Contains(pacsId))
+                {
+                    _database.ResolveProblem(activeProblem.Key);
+                }
+            }
+        }
+
+        foreach (var (dup, orig) in duplicates)
+        {
+            _database.ReportProblem(
+                $"config:duplicate_pacs:{dup.Id}",
+                "Configuration",
+                $"Дубликат PACS: «{dup.Name}»",
+                $"PACS «{dup.Name}» имеет те же параметры ({dup.IpAddress}:{dup.Port}, {dup.CalledAeTitle}), что и «{orig.Name}». Измените параметры или удалите дубликат.",
+                targetId: dup.Id);
+        }
+    }
+
     private void RefreshProblems()
     {
         if (_database is null)
@@ -637,6 +701,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        CheckConfigurationProblems();
         var selectedKey = SelectedProblem?.Key;
         var records = _database.GetActiveProblems();
         var currentKeys = records.Select(problem => problem.Key).ToHashSet(StringComparer.Ordinal);
@@ -679,7 +744,7 @@ public partial class MainWindow : Window
     private void SummaryButton_Click(object sender, RoutedEventArgs e)
     {
         if (_database is null) return;
-        new SummaryWindow(_database) { Owner = this }.ShowDialog();
+        new SummaryWindow(_database, _settings) { Owner = this }.ShowDialog();
     }
 
     private void ClearProblemsButton_Click(object sender, RoutedEventArgs e)
@@ -737,6 +802,121 @@ public partial class MainWindow : Window
             MessageBoxImage.Information);
     }
 
+    private void ResolveProblemAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (_database is null || SelectedProblem is not { } problem) return;
+        ResolveProblem(problem);
+    }
+
+    private void ResolveProblem(ProblemRow problem)
+    {
+        if (_database is null) return;
+        if (problem.KindCode is "Encoding" or "EncodingIrrecoverable" or "EncodingAmbiguous")
+        {
+            ResolveEncodingProblem(problem);
+            return;
+        }
+
+        ProblemActionMenuItem_Click(this, new RoutedEventArgs());
+    }
+
+    private void ResolveEncodingProblem(ProblemRow problem)
+    {
+        if (_database is null) return;
+
+        var queueItem = problem.QueueItemId is { } qId ? _database.GetItem(qId) : null;
+        var folder = queueItem?.FolderId is { } fId ? _settings.WatchFolders.FirstOrDefault(f => f.Id == fId) : null;
+        var pacs = problem.TargetId is { } pId ? _settings.PacsServers.FirstOrDefault(p => p.Id == pId) : null;
+
+        long deliveryId = 0;
+        if (problem.Key.StartsWith("delivery:", StringComparison.OrdinalIgnoreCase))
+        {
+            _ = long.TryParse(problem.Key["delivery:".Length..], out deliveryId);
+        }
+        else if (queueItem is not null)
+        {
+            var deliveries = _database.GetDeliveryDetails(queueItem.Id);
+            deliveryId = deliveries.FirstOrDefault(d => d.Status != "Отправлено")?.Id ?? 0;
+        }
+
+        var dialog = new ResolveEncodingProblemWindow(
+            problem.ObjectName,
+            problem.FilePath ?? queueItem?.FilePath ?? "—",
+            problem.Details,
+            folder?.Name ?? "Все папки",
+            pacs?.Name ?? "PACS")
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() != true || !dialog.IsConfirmed)
+            return;
+
+        try
+        {
+            var sourceMode = dialog.SelectedSourceMode;
+            var modeName = sourceMode switch
+            {
+                SourceEncodingMode.ForceUtf8 => "UTF-8",
+                SourceEncodingMode.ForceIso88595 => "ISO-8859-5",
+                _ => "Windows-1251"
+            };
+
+            if (dialog.IsPermanentRule && folder is not null && pacs is not null)
+            {
+                var rule = new EncodingRule
+                {
+                    Name = $"Авто: {folder.Name} → {pacs.Name} ({modeName})",
+                    SourceFolderId = folder.Id,
+                    DestinationPacsId = pacs.Id,
+                    ProcessingMode = EncodingProcessingMode.RepairInvalidTextElements,
+                    SourceEncodingMode = sourceMode,
+                    TargetEncoding = TargetDicomEncoding.IsoIr192,
+                    RepairAllTextFields = true,
+                    MatchModality = dialog.MatchModality,
+                    Modality = dialog.ModalityValue,
+                    MatchManufacturer = dialog.MatchManufacturer,
+                    Manufacturer = dialog.ManufacturerValue,
+                    MatchStationName = dialog.MatchStationName,
+                    StationName = dialog.StationNameValue
+                };
+                _settings.EncodingRules.Add(rule);
+                _settingsStore.Save(_settings);
+                _logger?.Info($"Создано постоянное правило кодировки: «{rule.Name}».");
+            }
+            else if (deliveryId > 0)
+            {
+                _database.SetDeliveryEncodingOverride(deliveryId, sourceMode, TargetDicomEncoding.IsoIr192);
+            }
+
+            if (deliveryId > 0)
+            {
+                _database.RetryDelivery(deliveryId);
+            }
+            else if (queueItem is not null)
+            {
+                _database.RetryQueueItem(queueItem.Id);
+            }
+
+            _monitor?.WakeDeliveryLoop();
+            _logger?.Info($"Инженер выбрал решение кодировки для «{problem.ObjectName}» ({modeName}). Исследование поставлено в очередь отправки.");
+
+            RefreshProblems();
+            RefreshQueue();
+
+            MessageBox.Show(
+                $"Решение кодировки применено ({modeName}). Исследование возвращено в очередь отправки.\n\n" +
+                "Проблема будет автоматически закрыта после успешного завершения C-STORE.",
+                "Решение принято",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Не удалось применить решение проблемы:\n{ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private async void ProblemActionMenuItem_Click(object sender, RoutedEventArgs e)
     {
         if (_database is null || SelectedProblem is not { } problem) return;
@@ -745,11 +925,7 @@ public partial class MainWindow : Window
             switch (problem.KindCode)
             {
                 case "Encoding" or "EncodingIrrecoverable" or "EncodingAmbiguous":
-                    var queueItem = problem.QueueItemId is { } encodingQueueItemId
-                        ? _database.GetItem(encodingQueueItemId)
-                        : null;
-                    await OpenSettingsAsync(window =>
-                        window.OpenEncodingRule(queueItem?.FolderId, problem.TargetId));
+                    ResolveEncodingProblem(problem);
                     break;
                 case "Delivery" when problem.QueueItemId is { } queueItemId:
                     RetryProblem(problem, queueItemId);
@@ -831,12 +1007,23 @@ public partial class MainWindow : Window
 
     private void AppendVisibleLog(string line)
     {
-        _visibleLogLines.Enqueue((DateTime.Now, line));
-        LogCountText.Text = $"{_visibleLogLines.Count} записей";
-        if (LogLineMatchesFilter(line)) AddLogLineToView(line);
+        var trimmed = _logBuffer.Add(line, out var entry);
+        LogCountText.Text = $"{_logBuffer.Count} записей";
+
+        if (trimmed)
+        {
+            RebuildLogView();
+        }
+        else if (LogLineMatchesFilter(line))
+        {
+            _visibleLogItems.Add(entry);
+            if (_visibleLogItems.Count > 0) LogList.ScrollIntoView(_visibleLogItems[^1]);
+        }
+
         if ((line.Contains("[ERROR]", StringComparison.Ordinal) ||
              line.Contains("[WARN]", StringComparison.Ordinal)) && !LogExpander.IsExpanded)
             LogErrorBadge.Visibility = Visibility.Visible;
+
         TrimVisibleLog();
         var isPacsAvailabilityMessage = line.Contains("PACS ", StringComparison.OrdinalIgnoreCase) &&
             line.Contains("недоступен", StringComparison.OrdinalIgnoreCase);
@@ -853,12 +1040,10 @@ public partial class MainWindow : Window
 
     private void TrimVisibleLog()
     {
-        var cutoff = DateTime.Now.AddHours(-_settings.UiRetentionHours);
-        var changed = false;
-        while (_visibleLogLines.TryPeek(out var entry) && entry.Timestamp < cutoff) { _visibleLogLines.Dequeue(); changed = true; }
+        var changed = _logBuffer.TrimTime(TimeSpan.FromHours(_settings.UiRetentionHours));
         if (changed)
         {
-            LogCountText.Text = $"{_visibleLogLines.Count} записей";
+            LogCountText.Text = $"{_logBuffer.Count} записей";
             RebuildLogView();
         }
     }
@@ -905,10 +1090,11 @@ public partial class MainWindow : Window
     private void RebuildLogView()
     {
         if (LogList is null) return;
-        LogList.Items.Clear();
-        foreach (var entry in _visibleLogLines.Where(entry => LogLineMatchesFilter(entry.Line)))
-            AddLogLineToView(entry.Line, false);
-        if (LogList.Items.Count > 0) LogList.ScrollIntoView(LogList.Items[^1]);
+        _visibleLogItems.Clear();
+        var filter = (LogFilterCombo?.SelectedItem as ComboBoxItem)?.Content?.ToString();
+        foreach (var entry in _logBuffer.GetSnapshot(filter))
+            _visibleLogItems.Add(entry);
+        if (_visibleLogItems.Count > 0) LogList.ScrollIntoView(_visibleLogItems[^1]);
     }
 
     private bool LogLineMatchesFilter(string line)
@@ -921,22 +1107,6 @@ public partial class MainWindow : Window
             "Информация" => line.Contains("[INFO]", StringComparison.Ordinal),
             _ => true
         };
-    }
-
-    private void AddLogLineToView(string line, bool scroll = true)
-    {
-        var color = line.Contains("[ERROR]", StringComparison.Ordinal) ? "#B42318"
-            : line.Contains("[WARN]", StringComparison.Ordinal) ? "#B54708"
-            : "#344054";
-        var text = new TextBlock
-        {
-            Text = line,
-            Foreground = (System.Windows.Media.Brush)new BrushConverter().ConvertFromString(color)!,
-            TextWrapping = TextWrapping.NoWrap,
-            Padding = new Thickness(4, 2, 4, 2)
-        };
-        LogList.Items.Add(text);
-        if (scroll) LogList.ScrollIntoView(text);
     }
 
     private void InitializeTray()

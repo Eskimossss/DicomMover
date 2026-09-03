@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using DicomMover.Models;
+using DicomMover.Services;
 using MessageBox = System.Windows.MessageBox;
 
 namespace DicomMover;
@@ -17,21 +18,27 @@ public partial class DicomTextConversionWindow : Window
         InitializeComponent();
         _allFiles = files;
         _rule = rule;
-        FileFilterCombo.ItemsSource = new[] { "Все файлы", "Только с ошибками" };
+        FileFilterCombo.ItemsSource = new[] { "Все файлы", "Только с ошибками", "Правило применяется", "Правило не применяется" };
+        ModalityFilterCombo.ItemsSource = new[] { "Все" }.Concat(DicomResultFilter.UniqueValues(files, x => x.Metadata?.Modality)).ToList();
+        StationNameFilterCombo.ItemsSource = new[] { "Все" }.Concat(DicomResultFilter.UniqueValues(files, x => x.Metadata?.StationName)).ToList();
         ChangedFilterCombo.ItemsSource = new[] { "Все", "Да", "Нет" };
         ChangedFilterCombo.SelectedIndex = 0;
         FileFilterCombo.SelectedIndex = 0;
+        ModalityFilterCombo.SelectedIndex = 0;
+        StationNameFilterCombo.SelectedIndex = 0;
         AfterColumn.Header = $"После преобразования — {TargetText(rule.TargetEncoding)}";
-        FolderSummaryText.Text = $"Файлов: {files.Count} • успешно: {files.Count(x => !x.HasProblem)} • с ошибками: {files.Count(x => x.HasProblem)} • кодировка: {TargetText(rule.TargetEncoding)}";
+        var applicable = files.Count(x => x.IsApplicable);
+        FolderSummaryText.Text = $"Файлов: {files.Count} • применяется: {applicable} • не применяется: {files.Count - applicable} • успешно: {files.Count(x => x.IsApplicable && !x.HasProblem)} • с ошибками: {files.Count(x => x.HasProblem)} • кодировка: {TargetText(rule.TargetEncoding)}";
         RefreshFiles();
     }
 
     private void RefreshFiles()
     {
         var currentPath = (FileCombo.SelectedItem as DicomFileConversionResult)?.FilePath;
-        _visibleFiles = (FileFilterCombo.SelectedIndex == 1 ? _allFiles.Where(x => x.HasProblem) : _allFiles).ToList();
+        _visibleFiles = DicomResultFilter.Conversions(_allFiles, FileFilterCombo.SelectedIndex,
+            SelectedMetadata(ModalityFilterCombo), SelectedMetadata(StationNameFilterCombo));
         FileCombo.ItemsSource = _visibleFiles;
-        FileCombo.SelectedItem = _visibleFiles.FirstOrDefault(x => x.FilePath == currentPath) ?? _visibleFiles.FirstOrDefault();
+        FileCombo.SelectedItem = DicomResultFilter.PreserveSelection(_visibleFiles, currentPath, x => x.FilePath);
         RefreshCurrent();
     }
 
@@ -40,7 +47,7 @@ public partial class DicomTextConversionWindow : Window
         if (FileCombo.SelectedItem is not DicomFileConversionResult file)
         {
             ElementsGrid.ItemsSource = null; DetailsButton.IsEnabled = false; PositionText.Text = "0 из 0";
-            FileSummaryText.Text = "Подходящие файлы не найдены."; VerificationSummaryText.Text = string.Empty; return;
+            FileSummaryText.Text = "Подходящие файлы не найдены."; VerificationSummaryText.Text = string.Empty; RuleSummaryText.Text = string.Empty; return;
         }
         var preview = file.Preview;
         var required = (preview.RequiredFieldTagIds ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -68,8 +75,18 @@ public partial class DicomTextConversionWindow : Window
         ElementsGrid.ItemsSource = visibleRows;
         ElementsGrid.SelectedItem = null;
         DetailsButton.IsEnabled = false;
-        FileSummaryText.Text = $"Текстовых элементов: {rows.Count} • успешно: {rows.Count(x => !x.IsProblem)} • изменено значений: {rows.Count(x => x.Changed == "Да")} • ошибок: {rows.Count(x => x.IsProblem)}";
-        VerificationSummaryText.Text = preview.Result;
+        RuleSummaryText.Text = file.RuleApplication is null ? string.Empty :
+            $"Правило: {file.RuleApplication.RuleName} • Условия: {file.RuleApplication.Conditions} • Результат: {file.RuleApplication.Result}";
+        if (!file.IsApplicable)
+        {
+            FileSummaryText.Text = $"Текстовых элементов: {rows.Count} • преобразование не проверялось";
+            VerificationSummaryText.Text = "— Правило не применяется";
+        }
+        else
+        {
+            FileSummaryText.Text = $"Текстовых элементов: {rows.Count} • успешно: {rows.Count(x => !x.IsProblem)} • изменено значений: {rows.Count(x => x.Changed == "Да")} • ошибок: {rows.Count(x => x.IsProblem)}";
+            VerificationSummaryText.Text = preview.Result;
+        }
         PositionText.Text = $"{_visibleFiles.IndexOf(file) + 1} из {_visibleFiles.Count}";
     }
 
@@ -77,6 +94,7 @@ public partial class DicomTextConversionWindow : Window
         _rule.SelectedTextFields.Contains(tagId, StringComparer.OrdinalIgnoreCase);
     private void FileCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshCurrent();
     private void FileFilter_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (IsLoaded) RefreshFiles(); }
+    private void MetadataFilter_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (IsLoaded) RefreshFiles(); }
     private void ChangedFilter_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (IsLoaded) RefreshCurrent(); }
     private void IgnoreEmptyCheck_Changed(object sender, RoutedEventArgs e) { if (IsLoaded) RefreshCurrent(); }
     private void Previous_Click(object sender, RoutedEventArgs e) => Move(-1);
@@ -104,4 +122,6 @@ public partial class DicomTextConversionWindow : Window
         TargetDicomEncoding.IsoIr100 => "ISO_IR 100 / Latin-1",
         _ => "ISO_IR 192 / UTF-8"
     };
+
+    private static string? SelectedMetadata(System.Windows.Controls.ComboBox combo) => combo.SelectedIndex <= 0 ? null : combo.SelectedItem?.ToString();
 }

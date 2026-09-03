@@ -201,6 +201,7 @@ public sealed class Database
                 next_attempt_at_utc=NULL, last_error=NULL WHERE id=$id;
             INSERT OR IGNORE INTO sent_sop_instances(sop_instance_uid,first_sent_at_utc)
             SELECT sop_instance_uid,$now FROM queue_items WHERE id=$itemId AND sop_instance_uid IS NOT NULL;
+            DELETE FROM delivery_encoding_overrides WHERE delivery_id=$id;
             """, command =>
         {
             command.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O"));
@@ -209,6 +210,7 @@ public sealed class Database
             command.Parameters.AddWithValue("$itemId", delivery.QueueItemId);
         });
         RecalculateQueueItem(delivery.QueueItemId);
+        ResolveProblem($"delivery:{delivery.Id}");
     }
 
     public void MarkDeliveryFailed(DeliveryItem delivery, string error, DateTime? nextAttempt, bool exhausted)
@@ -530,8 +532,49 @@ public int RetryFailedAndStuck()
             """;
         command.Parameters.AddWithValue("$id", deliveryId);
         var affected = command.ExecuteNonQuery();
-        ResolveProblem($"delivery:{deliveryId}");
         return affected;
+    }
+
+    public void SetDeliveryEncodingOverride(long deliveryId, SourceEncodingMode sourceMode, TargetDicomEncoding targetEncoding)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO delivery_encoding_overrides (delivery_id, source_encoding_mode, target_encoding, created_at_utc)
+            VALUES ($id, $sourceMode, $targetEncoding, $now)
+            ON CONFLICT(delivery_id) DO UPDATE SET
+                source_encoding_mode = excluded.source_encoding_mode,
+                target_encoding = excluded.target_encoding,
+                created_at_utc = excluded.created_at_utc;
+            """;
+        command.Parameters.AddWithValue("$id", deliveryId);
+        command.Parameters.AddWithValue("$sourceMode", (int)sourceMode);
+        command.Parameters.AddWithValue("$targetEncoding", (int)targetEncoding);
+        command.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O"));
+        command.ExecuteNonQuery();
+    }
+
+    public (SourceEncodingMode SourceMode, TargetDicomEncoding TargetEncoding)? GetDeliveryEncodingOverride(long deliveryId)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT source_encoding_mode, target_encoding FROM delivery_encoding_overrides WHERE delivery_id = $id;";
+        command.Parameters.AddWithValue("$id", deliveryId);
+        using var reader = command.ExecuteReader();
+        if (reader.Read())
+        {
+            return ((SourceEncodingMode)reader.GetInt32(0), (TargetDicomEncoding)reader.GetInt32(1));
+        }
+        return null;
+    }
+
+    public void RemoveDeliveryEncodingOverride(long deliveryId)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM delivery_encoding_overrides WHERE delivery_id = $id;";
+        command.Parameters.AddWithValue("$id", deliveryId);
+        command.ExecuteNonQuery();
     }
 
     private static string TranslateDeliveryStatus(string status) => status switch
@@ -787,6 +830,14 @@ public int RetryFailedAndStuck()
             detected_at_utc TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS delivery_encoding_overrides (
+            delivery_id INTEGER PRIMARY KEY,
+            source_encoding_mode INTEGER NOT NULL,
+            target_encoding INTEGER NOT NULL,
+            created_at_utc TEXT NOT NULL,
+            FOREIGN KEY(delivery_id) REFERENCES queue_deliveries(id) ON DELETE CASCADE
+        );
+
         INSERT OR IGNORE INTO sent_sop_instances(sop_instance_uid,first_sent_at_utc)
         SELECT sop_instance_uid,COALESCE(sent_at_utc,discovered_at_utc)
         FROM queue_items WHERE status='Sent' AND sop_instance_uid IS NOT NULL;
@@ -795,6 +846,14 @@ public int RetryFailedAndStuck()
         SELECT file_path,file_path,details,occurred_at_utc
         FROM operational_problems
         WHERE kind='BadFile' AND file_path IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_queue_items_sop_uid ON queue_items(sop_instance_uid);
+        CREATE INDEX IF NOT EXISTS idx_queue_items_ready ON queue_items(status, next_attempt_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_queue_items_archived_status ON queue_items(is_archived, status, sent_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_queue_deliveries_ready ON queue_deliveries(status, next_attempt_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_queue_deliveries_item_status ON queue_deliveries(queue_item_id, status);
+        CREATE INDEX IF NOT EXISTS idx_operational_problems_resolved ON operational_problems(resolved_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_rejected_files_detected ON rejected_files(detected_at_utc);
 
         UPDATE queue_deliveries SET status='Failed', next_attempt_at_utc=$now,
             last_error=COALESCE(last_error, 'Предыдущий запуск завершился во время отправки.')
@@ -971,45 +1030,61 @@ private void EnsureColumn(string columnName, string definition)
             notSent + rejected);
     }
 
-    public PeriodSummary GetPeriodSummary(DateTime localFrom, DateTime localTo)
+    public PeriodSummary GetPeriodSummary(DateTime localFrom, DateTime localTo, string? pacsId = null)
     {
         var start = localFrom.Date.ToUniversalTime();
         var end = localTo.Date.AddDays(1).ToUniversalTime();
         using var connection = Open();
         using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT COUNT(*),
-                   SUM(CASE WHEN q.status='Sent' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN q.status='Exhausted' OR
-                       (q.status='Partial'
-                        AND EXISTS(SELECT 1 FROM queue_deliveries dx WHERE dx.queue_item_id=q.id AND dx.status='Exhausted')
-                        AND NOT EXISTS(SELECT 1 FROM queue_deliveries dr WHERE dr.queue_item_id=q.id AND dr.status IN ('Pending','Sending','Failed','Unavailable')))
-                   THEN 1 ELSE 0 END),
-                   COALESCE((SELECT SUM(d.attempt_count)
-                             FROM queue_deliveries d
-                             JOIN queue_items qi ON qi.id=d.queue_item_id
-                             WHERE qi.discovered_at_utc >= $start AND qi.discovered_at_utc < $end), 0)
-            FROM queue_items q
-            WHERE q.discovered_at_utc >= $start AND q.discovered_at_utc < $end;
-            """;
+
+        if (string.IsNullOrWhiteSpace(pacsId))
+        {
+            command.CommandText = """
+                SELECT
+                    (SELECT COUNT(DISTINCT q.id) FROM queue_items q WHERE q.discovered_at_utc >= $start AND q.discovered_at_utc < $end),
+                    COALESCE(SUM(CASE WHEN d.status = 'Sent' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN d.status IS NOT NULL AND d.status != 'Sent' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(d.attempt_count), 0)
+                FROM queue_items q
+                LEFT JOIN queue_deliveries d ON d.queue_item_id = q.id
+                WHERE q.discovered_at_utc >= $start AND q.discovered_at_utc < $end;
+                """;
+        }
+        else
+        {
+            command.CommandText = """
+                SELECT
+                    COUNT(DISTINCT d.queue_item_id),
+                    COALESCE(SUM(CASE WHEN d.status = 'Sent' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN d.status != 'Sent' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(d.attempt_count), 0)
+                FROM queue_deliveries d
+                JOIN queue_items q ON q.id = d.queue_item_id
+                WHERE q.discovered_at_utc >= $start AND q.discovered_at_utc < $end
+                  AND d.pacs_id = $pacsId;
+                """;
+            command.Parameters.AddWithValue("$pacsId", pacsId);
+        }
+
         command.Parameters.AddWithValue("$start", start.ToString("O"));
         command.Parameters.AddWithValue("$end", end.ToString("O"));
         using var reader = command.ExecuteReader();
         reader.Read();
-        var queueFound = reader.GetInt32(0);
+        var studiesFound = reader.IsDBNull(0) ? 0 : reader.GetInt32(0);
         var sent = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
         var notSent = reader.IsDBNull(2) ? 0 : reader.GetInt32(2);
         var attempts = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
         reader.Close();
-        var rejected = GetRejectedCount(connection, start, end);
+
+        var rejected = string.IsNullOrWhiteSpace(pacsId) ? GetRejectedCount(connection, start, end) : 0;
         return new PeriodSummary(
-            queueFound + rejected,
+            studiesFound + rejected,
             sent,
             notSent + rejected,
             attempts);
     }
 
-    public IReadOnlyList<PacsPeriodSummary> GetPacsPeriodSummary(DateTime localFrom, DateTime localTo)
+    public IReadOnlyList<PacsPeriodSummary> GetPacsPeriodSummary(DateTime localFrom, DateTime localTo, string? pacsId = null)
     {
         var start = localFrom.Date.ToUniversalTime();
         var end = localTo.Date.AddDays(1).ToUniversalTime();
@@ -1019,16 +1094,18 @@ private void EnsureColumn(string columnName, string definition)
             SELECT d.pacs_name,
                    COUNT(*),
                    SUM(CASE WHEN d.status='Sent' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN d.status='Exhausted' THEN 1 ELSE 0 END),
-                   SUM(d.attempt_count)
+                   SUM(CASE WHEN d.status != 'Sent' THEN 1 ELSE 0 END),
+                   COALESCE(SUM(d.attempt_count), 0)
             FROM queue_deliveries d
             JOIN queue_items q ON q.id=d.queue_item_id
             WHERE q.discovered_at_utc >= $start AND q.discovered_at_utc < $end
+              AND ($pacsId IS NULL OR d.pacs_id = $pacsId)
             GROUP BY d.pacs_id, d.pacs_name
             ORDER BY d.pacs_name;
             """;
         command.Parameters.AddWithValue("$start", start.ToString("O"));
         command.Parameters.AddWithValue("$end", end.ToString("O"));
+        command.Parameters.AddWithValue("$pacsId", (object?)pacsId ?? DBNull.Value);
         using var reader = command.ExecuteReader();
         var result = new List<PacsPeriodSummary>();
         while (reader.Read())
@@ -1041,7 +1118,7 @@ private void EnsureColumn(string columnName, string definition)
         return result;
     }
 
-    public IReadOnlyList<FileResultSummary> GetFileResultsForPeriod(DateTime localFrom, DateTime localTo)
+    public IReadOnlyList<FileResultSummary> GetFileResultsForPeriod(DateTime localFrom, DateTime localTo, string? pacsId = null)
     {
         var start = localFrom.Date.ToUniversalTime();
         var end = localTo.Date.AddDays(1).ToUniversalTime();
@@ -1060,6 +1137,7 @@ private void EnsureColumn(string columnName, string definition)
                 FROM queue_items q
                 LEFT JOIN queue_deliveries d ON d.queue_item_id=q.id
                 WHERE q.discovered_at_utc >= $start AND q.discovered_at_utc < $end
+                  AND ($pacsId IS NULL OR d.pacs_id = $pacsId)
                 UNION ALL
                 SELECT r.stored_path,
                        'Не определено',
@@ -1071,12 +1149,14 @@ private void EnsureColumn(string columnName, string definition)
                        r.detected_at_utc
                 FROM rejected_files r
                 WHERE r.detected_at_utc >= $start AND r.detected_at_utc < $end
+                  AND $pacsId IS NULL
             )
             SELECT file_path,patient_name,pacs_name,status,attempt_count,event_at,result
             FROM results ORDER BY sort_at DESC;
             """;
         command.Parameters.AddWithValue("$start", start.ToString("O"));
         command.Parameters.AddWithValue("$end", end.ToString("O"));
+        command.Parameters.AddWithValue("$pacsId", (object?)pacsId ?? DBNull.Value);
         using var reader = command.ExecuteReader();
         var result = new List<FileResultSummary>();
         while (reader.Read())
@@ -1134,6 +1214,207 @@ private void EnsureColumn(string columnName, string definition)
         AccessionNumber = reader.IsDBNull(18) ? null : reader.GetString(18),
         StudyDate = reader.IsDBNull(19) ? null : reader.GetString(19)
     };
+
+    public List<string> GetDistinctModalities()
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT DISTINCT modality FROM queue_items WHERE modality IS NOT NULL AND modality <> '' ORDER BY modality;";
+        using var reader = command.ExecuteReader();
+        var list = new List<string>();
+        while (reader.Read())
+            list.Add(reader.GetString(0));
+        return list;
+    }
+
+    public sealed record HistoricalStudiesSummary(
+        int EligibleCount,
+        long TotalBytes,
+        int MissingFilesCount,
+        IReadOnlyList<QueueItem> PreviewItems);
+
+    public HistoricalStudiesSummary CalculateHistoricalStudies(
+        string? folderId,
+        DateTime? fromDate,
+        DateTime? toDate,
+        string? modality,
+        string targetPacsId)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT q.id, q.file_key, q.file_path, q.status, q.attempt_count,
+                   q.discovered_at_utc, q.last_attempt_at_utc, q.sent_at_utc,
+                   q.sop_instance_uid, q.pacs_status, q.last_error, q.patient_name,
+                   NULL, q.folder_id, q.patient_id, q.patient_birth_date, q.modality,
+                   q.study_instance_uid, q.accession_number, q.study_date
+            FROM queue_items q
+            WHERE ($folderId IS NULL OR q.folder_id = $folderId)
+              AND ($modality IS NULL OR q.modality = $modality)
+              AND ($fromDate IS NULL OR (q.study_date IS NOT NULL AND q.study_date >= $fromDate))
+              AND ($toDate IS NULL OR (q.study_date IS NOT NULL AND q.study_date <= $toDate))
+              AND NOT EXISTS (
+                  SELECT 1 FROM queue_deliveries d
+                  WHERE d.queue_item_id = q.id AND d.pacs_id = $targetPacsId
+              )
+            ORDER BY q.id DESC;
+            """;
+        command.Parameters.AddWithValue("$folderId", (object?)folderId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$modality", (object?)modality ?? DBNull.Value);
+        command.Parameters.AddWithValue("$fromDate", fromDate.HasValue ? fromDate.Value.ToString("yyyyMMdd") : (object)DBNull.Value);
+        command.Parameters.AddWithValue("$toDate", toDate.HasValue ? toDate.Value.ToString("yyyyMMdd") : (object)DBNull.Value);
+        command.Parameters.AddWithValue("$targetPacsId", targetPacsId);
+
+        using var reader = command.ExecuteReader();
+        var eligible = 0;
+        long totalBytes = 0;
+        var missing = 0;
+        var preview = new List<QueueItem>();
+
+        while (reader.Read())
+        {
+            var item = Read(reader);
+            if (!File.Exists(item.FilePath))
+            {
+                missing++;
+                continue;
+            }
+
+            try
+            {
+                var length = new FileInfo(item.FilePath).Length;
+                totalBytes += length;
+            }
+            catch { }
+
+            eligible++;
+            if (preview.Count < 100)
+                preview.Add(item);
+        }
+
+        return new HistoricalStudiesSummary(eligible, totalBytes, missing, preview);
+    }
+
+    public int CountHistoricalStudies(string? folderId, DateTime? fromDate, DateTime? toDate, string? modality, string targetPacsId)
+    {
+        return CalculateHistoricalStudies(folderId, fromDate, toDate, modality, targetPacsId).EligibleCount;
+    }
+
+    public IReadOnlyList<QueueItem> PreviewHistoricalStudies(string? folderId, DateTime? fromDate, DateTime? toDate, string? modality, string targetPacsId, int limit = 100)
+    {
+        return CalculateHistoricalStudies(folderId, fromDate, toDate, modality, targetPacsId).PreviewItems;
+    }
+
+    public int EnqueueHistoricalDeliveries(
+        string? folderId,
+        DateTime? fromDate,
+        DateTime? toDate,
+        string? modality,
+        PacsSettings targetPacs,
+        CancellationToken cancellationToken = default,
+        IProgress<int>? progress = null)
+    {
+        using var connection = Open();
+
+        var candidateItems = new List<long>();
+        using (var selectCmd = connection.CreateCommand())
+        {
+            selectCmd.CommandText = """
+                SELECT q.id, q.file_path
+                FROM queue_items q
+                WHERE ($folderId IS NULL OR q.folder_id = $folderId)
+                  AND ($modality IS NULL OR q.modality = $modality)
+                  AND ($fromDate IS NULL OR (q.study_date IS NOT NULL AND q.study_date >= $fromDate))
+                  AND ($toDate IS NULL OR (q.study_date IS NOT NULL AND q.study_date <= $toDate))
+                  AND NOT EXISTS (
+                      SELECT 1 FROM queue_deliveries d
+                      WHERE d.queue_item_id = q.id AND d.pacs_id = $pacsId
+                  );
+                """;
+            selectCmd.Parameters.AddWithValue("$folderId", (object?)folderId ?? DBNull.Value);
+            selectCmd.Parameters.AddWithValue("$modality", (object?)modality ?? DBNull.Value);
+            selectCmd.Parameters.AddWithValue("$fromDate", fromDate.HasValue ? fromDate.Value.ToString("yyyyMMdd") : (object)DBNull.Value);
+            selectCmd.Parameters.AddWithValue("$toDate", toDate.HasValue ? toDate.Value.ToString("yyyyMMdd") : (object)DBNull.Value);
+            selectCmd.Parameters.AddWithValue("$pacsId", targetPacs.Id);
+
+            using var reader = selectCmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var id = reader.GetInt64(0);
+                var path = reader.GetString(1);
+                if (File.Exists(path))
+                {
+                    candidateItems.Add(id);
+                }
+            }
+        }
+
+        if (candidateItems.Count == 0) return 0;
+
+        var enqueued = 0;
+        const int batchSize = 50;
+
+        for (var i = 0; i < candidateItems.Count; i += batchSize)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var chunk = candidateItems.Skip(i).Take(batchSize).ToList();
+            using var tx = connection.BeginTransaction();
+
+            using var insertCmd = connection.CreateCommand();
+            insertCmd.Transaction = tx;
+            insertCmd.CommandText = """
+                INSERT OR IGNORE INTO queue_deliveries (queue_item_id, pacs_id, pacs_name, status, attempt_count)
+                VALUES ($itemId, $pacsId, $pacsName, 'Pending', 0);
+                """;
+            var paramItemId = insertCmd.Parameters.Add("$itemId", SqliteType.Integer);
+            insertCmd.Parameters.AddWithValue("$pacsId", targetPacs.Id);
+            insertCmd.Parameters.AddWithValue("$pacsName", targetPacs.Name);
+
+            var cancelRequestedInChunk = false;
+            foreach (var itemId in chunk)
+            {
+                paramItemId.Value = itemId;
+                var affected = insertCmd.ExecuteNonQuery();
+                if (affected > 0)
+                {
+                    enqueued++;
+                    progress?.Report(enqueued);
+                }
+
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    cancelRequestedInChunk = true;
+                    break;
+                }
+            }
+
+            if (enqueued > 0)
+            {
+                using var updateCmd = connection.CreateCommand();
+                updateCmd.Transaction = tx;
+                updateCmd.CommandText = """
+                    UPDATE queue_items
+                    SET is_archived = 0, status = 'Pending'
+                    WHERE id IN (
+                        SELECT queue_item_id FROM queue_deliveries
+                        WHERE pacs_id = $pacsId AND status = 'Pending'
+                    ) AND (is_archived = 1 OR status = 'Sent');
+                    """;
+                updateCmd.Parameters.AddWithValue("$pacsId", targetPacs.Id);
+                updateCmd.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+
+            if (cancelRequestedInChunk)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+        }
+
+        return enqueued;
+    }
 }
 
 public sealed record DailySummary(int Found, int InQueue, int Sent, int WithErrors);

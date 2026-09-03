@@ -11,12 +11,24 @@ public static class AppPaths
     private static string GetBaseDirectory()
     {
 #if DEBUG
-        return FindDevelopmentRoot() ?? AppContext.BaseDirectory;
+        return FindDevelopmentRoot() ?? GetExecutableDirectory();
 #else
-        // Опубликованная portable-версия не должна искать настройки в родительских
-        // каталогах, даже если её распаковали внутри папки с исходным проектом.
-        return AppContext.BaseDirectory;
+        // Опубликованная portable-версия должна использовать каталог расположения EXE,
+        // а не временный каталог распаковки single-file (AppContext.BaseDirectory).
+        return GetExecutableDirectory();
 #endif
+    }
+
+    private static string GetExecutableDirectory()
+    {
+        var processPath = Environment.ProcessPath;
+        if (!string.IsNullOrEmpty(processPath))
+        {
+            var dir = Path.GetDirectoryName(processPath);
+            if (!string.IsNullOrEmpty(dir))
+                return dir;
+        }
+        return AppContext.BaseDirectory;
     }
 
 #if DEBUG

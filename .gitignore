@@ -4,6 +4,15 @@ publish/
 .vs/
 .idea/
 .dotnet-cli/
+.gemini/
+AGENTS.md
+
+# Local release and research artifacts
+artifacts/
+research/
+resume_work/
+ГЕЛПИК/
+Кодировка/
 
 *.user
 *.suo

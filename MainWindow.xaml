@@ -222,6 +222,7 @@
                               AlternatingRowBackground="{DynamicResource SurfaceAltBrush}" Background="{DynamicResource SurfaceBrush}" Foreground="{DynamicResource TextBrush}">
                         <DataGrid.ContextMenu>
                             <ContextMenu>
+                                <MenuItem Header="Решить проблему" FontWeight="SemiBold" Click="ResolveProblemAction_Click"/>
                                 <MenuItem Header="Выполнить рекомендуемое действие" Click="ProblemActionMenuItem_Click"/>
                                 <MenuItem Header="Подробности исследования" Click="ProblemDetailsMenuItem_Click"/>
                                 <MenuItem Header="Повторить отправку" Click="ProblemRetryMenuItem_Click"/>
@@ -260,7 +261,13 @@
             <Border Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,8,0,0">
                 <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*" MinHeight="80"/></Grid.RowDefinitions>
                     <Grid Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal"><TextBlock Text="Показывать:" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/><ComboBox x:Name="LogFilterCombo" Width="150" Margin="8,0,0,0" SelectedIndex="0" SelectionChanged="LogFilter_Changed"><ComboBoxItem Content="Все"/><ComboBoxItem Content="Ошибки"/><ComboBoxItem Content="Предупреждения"/><ComboBoxItem Content="Информация"/></ComboBox></StackPanel><StackPanel Grid.Column="1" Orientation="Horizontal"><Button Content="Очистить" Click="ClearLogButton_Click"/><Button Content="Открыть папку" Click="OpenLogFolderButton_Click"/></StackPanel></Grid>
-                    <ListBox Grid.Row="1" x:Name="LogList" FontFamily="Consolas" FontSize="12" Background="{DynamicResource SurfaceAltBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource BorderBrush}" ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
+                    <ListBox Grid.Row="1" x:Name="LogList" FontFamily="Consolas" FontSize="12" Background="{DynamicResource SurfaceAltBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource BorderBrush}" ScrollViewer.HorizontalScrollBarVisibility="Auto" VirtualizingStackPanel.IsVirtualizing="True" VirtualizingStackPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Line}" Foreground="{Binding ForegroundColor}" Padding="4,2,4,2"/>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
                 </Grid>
             </Border>
         </Expander>
