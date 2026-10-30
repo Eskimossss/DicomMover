@@ -30,13 +30,13 @@ public sealed class SettingsStore
         var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path), JsonOptions)
             ?? throw new InvalidDataException("Файл настроек пуст.");
         settings.NormalizeLegacy();
-        settings.Validate(throwOnDuplicatePacs: false);
+        settings.Validate(throwOnDuplicatePacs: false, requireConfigured: false);
         return settings;
     }
 
     public void Save(AppSettings settings)
     {
-        settings.Validate();
+        settings.Validate(throwOnDuplicatePacs: true, requireConfigured: false);
         var directory = Path.GetDirectoryName(_path)
             ?? throw new InvalidDataException("Не удалось определить каталог настроек.");
         Directory.CreateDirectory(directory);

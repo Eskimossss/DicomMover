@@ -8,6 +8,25 @@ namespace DicomMover.Tests;
 public sealed class SettingsStoreTests
 {
     [Fact]
+    public void FirstRunDefaultsStayEmptyAfterSaveAndReload()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "DicomMoverSettingsTests", Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "appsettings.json");
+        try
+        {
+            var store = new SettingsStore(path);
+            store.Save(AppSettings.CreateDefaultSafe());
+            var loaded = store.Load();
+            Assert.Empty(loaded.WatchFolders);
+            Assert.Empty(loaded.PacsServers);
+            Assert.Empty(loaded.EncodingRules);
+            Assert.False(loaded.AutoStartMonitoring);
+            Assert.Throws<InvalidDataException>(loaded.Validate);
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    [Fact]
     public void MigratesLegacySingleFolderAndPacs()
     {
         var directory = Path.Combine(Path.GetTempPath(), "DicomMoverSettingsTests", Guid.NewGuid().ToString("N"));
@@ -121,7 +140,7 @@ public sealed class SettingsStoreTests
     }
 
     [Fact]
-    public void AssemblyVersion_And_AboutDisplayVersion_Is1_5()
+    public void AssemblyVersion_And_AboutDisplayVersion_Is1_5_4()
     {
         var assembly = typeof(AboutWindow).Assembly;
         var version = assembly.GetName().Version!;
@@ -130,8 +149,8 @@ public sealed class SettingsStoreTests
             ? infoVersion.Split('+')[0].Trim()
             : version.ToString(2);
 
-        Assert.Equal("1.5.0.0", version.ToString());
-        Assert.Equal("1.5", infoVersion);
-        Assert.Equal("1.5", displayVersion);
+        Assert.Equal("1.5.4.0", version.ToString());
+        Assert.Equal("1.5.4", infoVersion);
+        Assert.Equal("1.5.4", displayVersion);
     }
 }

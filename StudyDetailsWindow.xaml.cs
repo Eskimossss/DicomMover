@@ -57,7 +57,7 @@ public partial class StudyDetailsWindow : Window
     }
 
     private static string FormatDicomDate(string? value) =>
-        value is { Length: 8 } && DateTime.TryParseExact(value, "yyyyMMdd", null, System.Globalization.DateTimeStyles.None, out var date)
+        DicomStudyDate.TryParse(value, out var date)
             ? date.ToString("dd.MM.yyyy")
             : value ?? string.Empty;
 }

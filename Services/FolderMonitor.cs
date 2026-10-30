@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Globalization;
 using DicomMover.Models;
 using FellowOakDicom;
 using FellowOakDicom.Network;
@@ -134,18 +133,34 @@ public sealed class FolderMonitor
                 continue;
             }
             var key = BuildKey(info);
+            var legacyKey = key;
+            string? contentHash = null;
+            if (folder.IgnoreSopInstanceUidDuplicates || folder.RepairInvalidDicomUids)
+            {
+                try
+                {
+                    contentHash = DicomUidCompatibility.HashFile(info.FullName);
+                    key = DicomUidCompatibility.KeyPrefix + contentHash;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    accessErrors++;
+                    _logger.Warn($"Не удалось вычислить SHA-256: {info.FullName}; {ex.Message}");
+                    continue;
+                }
+            }
             if (_dateFilteredFiles.Contains(key))
             {
                 dateFilteredCount++;
                 continue;
             }
-            if (_database.Contains(key))
+            if (contentHash is null && _database.Contains(key))
             {
                 knownFiles++;
                 _database.EnsureDestinationsForExisting(key, destinations);
                 continue;
             }
-            var inspection = InspectDicomFile(info.FullName);
+            var inspection = InspectDicomFile(info.FullName, folder.RepairInvalidDicomUids);
             var fileProblemKey = $"file:{info.FullName.ToUpperInvariant()}";
 
             if (inspection.Status is DicomFileInspectionStatus.TemporarilyInaccessible
@@ -211,6 +226,18 @@ public sealed class FolderMonitor
             }
 
             var metadata = inspection.Metadata!;
+            if (folder.RepairInvalidDicomUids)
+                DicomUidCompatibility.PrepareMetadata(metadata, contentHash!);
+            if (contentHash is not null)
+            {
+                _database.ApplyCompatibilityIdentity(legacyKey, key, metadata, folder.RepairInvalidDicomUids);
+                if (_database.Contains(key))
+                {
+                    knownFiles++;
+                    _database.EnsureDestinationsForExisting(key, destinations);
+                    continue;
+                }
+            }
             if (folder.SendStudiesFromDate is { } fromDate &&
                 (!TryParseDicomDate(metadata.StudyDate, out var studyDate) || studyDate.Date < fromDate.Date))
             {
@@ -219,12 +246,12 @@ public sealed class FolderMonitor
                 newlyDateFilteredCount++;
                 continue;
             }
-            if (_database.ContainsSopInstanceUid(metadata.SopInstanceUid))
+            if (!folder.IgnoreSopInstanceUidDuplicates && _database.ContainsSopInstanceUid(metadata.SopInstanceUid))
             {
                 knownFiles++;
                 continue;
             }
-            _database.Enqueue(key, info.FullName, metadata.SopInstanceUid, metadata.PatientName, folder.Id, destinations, metadata);
+            _database.Enqueue(key, info.FullName, metadata.SopInstanceUid, metadata.PatientName, folder.Id, destinations, metadata, folder.RepairInvalidDicomUids);
             queuedFiles++;
             _logger.Info(_settings.LogPatientNames && !string.IsNullOrWhiteSpace(metadata.PatientName)
                 ? $"Добавлен в очередь: {info.FullName}; пациент: {metadata.PatientName}"
@@ -244,7 +271,7 @@ public sealed class FolderMonitor
     }
 
     private static bool TryParseDicomDate(string? value, out DateTime date) =>
-        DateTime.TryParseExact(value, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date);
+        DicomStudyDate.TryParse(value, out date);
 
     internal async Task SendAsync(DeliveryItem delivery, CancellationToken cancellationToken)
     {
@@ -305,13 +332,38 @@ public sealed class FolderMonitor
                     _settings.EncodingRules, delivery.FolderId, delivery.PacsId, delivery.FilePath);
             }
             DicomTranscodeResult? transcodeResult = null;
+            var compatibility = _database.GetCompatibilityState(delivery.QueueItemId);
+            string? sourceHash = null;
+            DicomFile? sourceSnapshot = null;
+            if (compatibility is { } saved && saved.FileKey.StartsWith(DicomUidCompatibility.KeyPrefix, StringComparison.Ordinal))
+            {
+                sourceHash = saved.FileKey[DicomUidCompatibility.KeyPrefix.Length..];
+                var sourceBytes = File.ReadAllBytes(delivery.FilePath);
+                if (Convert.ToHexString(SHA256.HashData(sourceBytes)) != sourceHash)
+                    throw new InvalidDataException("Файл изменился после постановки в очередь (SHA-256 не совпадает). Отправка с прежними UID остановлена.");
+                sourceSnapshot = DicomFile.Open(new MemoryStream(sourceBytes), Encoding.GetEncoding(1251), stop: null, FileReadOption.ReadAll);
+            }
             var shouldTransform = encodingRule is not null &&
                                   encodingRule.ProcessingMode != EncodingProcessingMode.NoChange &&
                                   encodingRule.TargetEncoding != TargetDicomEncoding.NoChange;
             DicomCStoreRequest request;
-            if (!shouldTransform)
+            if (compatibility?.RepairUids == true)
             {
-                request = new DicomCStoreRequest(delivery.FilePath);
+                if (shouldTransform)
+                {
+                    transcodeResult = _dicomTextTranscoder.Transcode(delivery.FilePath, encodingRule!);
+                    tempFilePath = transcodeResult.TempFilePath;
+                    if (DicomUidCompatibility.HashFile(delivery.FilePath) != sourceHash)
+                        throw new InvalidDataException("Исходный файл изменился во время подготовки к отправке.");
+                }
+                var outgoing = transcodeResult?.File ?? sourceSnapshot!;
+                var changes = DicomUidCompatibility.Apply(outgoing, sourceHash!);
+                request = new DicomCStoreRequest(outgoing);
+                _logger.Info($"Совместимость UID: {delivery.FilePath}; {string.Join("; ", changes)}");
+            }
+            else if (!shouldTransform)
+            {
+                request = sourceSnapshot is null ? new DicomCStoreRequest(delivery.FilePath) : new DicomCStoreRequest(sourceSnapshot);
             }
             else
             {
@@ -750,7 +802,7 @@ public sealed class FolderMonitor
         return result.Status == DicomFileInspectionStatus.ValidDicom;
     }
 
-    internal static DicomFileInspectionResult InspectDicomFile(string path)
+    internal static DicomFileInspectionResult InspectDicomFile(string path, bool allowMissingInstanceUid = false)
     {
         if (!File.Exists(path))
             return new DicomFileInspectionResult(DicomFileInspectionStatus.NetworkOrFileError, null, $"Файл не существует: {path}");
@@ -767,7 +819,7 @@ public sealed class FolderMonitor
             var sopInstanceUid = file.Dataset.GetSingleValueOrDefault(DicomTag.SOPInstanceUID, string.Empty);
             var sopClass = file.Dataset.GetSingleValueOrDefault(DicomTag.SOPClassUID, string.Empty);
 
-            if (string.IsNullOrWhiteSpace(sopInstanceUid) || string.IsNullOrWhiteSpace(sopClass))
+            if ((!allowMissingInstanceUid && string.IsNullOrWhiteSpace(sopInstanceUid)) || string.IsNullOrWhiteSpace(sopClass))
             {
                 return new DicomFileInspectionResult(
                     DicomFileInspectionStatus.ConfirmedCorruptDicom,
@@ -777,7 +829,10 @@ public sealed class FolderMonitor
 
             var metadata = new DicomMetadata
             {
-                SopInstanceUid = sopInstanceUid
+                SopInstanceUid = sopInstanceUid,
+                OriginalSopInstanceUid = sopInstanceUid,
+                SopClassUid = sopClass,
+                SeriesInstanceUid = file.Dataset.GetSingleValueOrDefault(DicomTag.SeriesInstanceUID, string.Empty)
             };
             var rawName = file.Dataset.GetSingleValueOrDefault(DicomTag.PatientName, string.Empty).Split('=', 2)[0];
             metadata.PatientName = string.Join(" ", rawName.Split('^').Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()));
@@ -786,7 +841,8 @@ public sealed class FolderMonitor
             metadata.Modality = file.Dataset.GetSingleValueOrDefault(DicomTag.Modality, string.Empty);
             metadata.StudyInstanceUid = file.Dataset.GetSingleValueOrDefault(DicomTag.StudyInstanceUID, string.Empty);
             metadata.AccessionNumber = file.Dataset.GetSingleValueOrDefault(DicomTag.AccessionNumber, string.Empty);
-            metadata.StudyDate = file.Dataset.GetSingleValueOrDefault(DicomTag.StudyDate, string.Empty);
+            var studyDate = file.Dataset.GetSingleValueOrDefault(DicomTag.StudyDate, string.Empty);
+            metadata.StudyDate = DicomStudyDate.Normalize(studyDate) ?? studyDate;
 
             return new DicomFileInspectionResult(DicomFileInspectionStatus.ValidDicom, metadata);
         }

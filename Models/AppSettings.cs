@@ -122,6 +122,8 @@ public sealed class WatchFolderSettings
     public bool DeleteEmptySubfolders { get; set; }
     public int EmptyFolderCleanupDelayMinutes { get; set; } = 30;
     public DateTime? SendStudiesFromDate { get; set; }
+    public bool IgnoreSopInstanceUidDuplicates { get; set; }
+    public bool RepairInvalidDicomUids { get; set; }
 
     public WatchFolderSettings Copy() => new()
     {
@@ -136,7 +138,9 @@ public sealed class WatchFolderSettings
         PreserveSubfolders = PreserveSubfolders,
         DeleteEmptySubfolders = DeleteEmptySubfolders,
         EmptyFolderCleanupDelayMinutes = EmptyFolderCleanupDelayMinutes,
-        SendStudiesFromDate = SendStudiesFromDate
+        SendStudiesFromDate = SendStudiesFromDate,
+        IgnoreSopInstanceUidDuplicates = IgnoreSopInstanceUidDuplicates,
+        RepairInvalidDicomUids = RepairInvalidDicomUids
     };
 }
 
@@ -278,30 +282,8 @@ public sealed class AppSettings
 
     public static AppSettings CreateDefaultSafe()
     {
-        var pacs = new PacsSettings
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            Name = "PACS Server",
-            IpAddress = "127.0.0.1",
-            Port = 104,
-            CalledAeTitle = "PACS",
-            CallingAeTitle = "DICOMMOVER",
-            Enabled = false
-        };
-
-        var folder = new WatchFolderSettings
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            Name = "Входная папка DICOM",
-            Path = @"C:\DicomIn",
-            PacsIds = [pacs.Id],
-            Enabled = false
-        };
-
         return new AppSettings
         {
-            WatchFolders = [folder],
-            PacsServers = [pacs],
             DatabaseFile = @"data\dicommover.db",
             LogFile = @"logs\dicommover.log"
         };
@@ -339,10 +321,10 @@ public sealed class AppSettings
 
     public void Validate() => Validate(throwOnDuplicatePacs: true);
 
-    public void Validate(bool throwOnDuplicatePacs)
+    public void Validate(bool throwOnDuplicatePacs, bool requireConfigured = true)
     {
         NormalizeLegacy();
-        if (WatchFolders.Count == 0 || PacsServers.Count == 0)
+        if (requireConfigured && (WatchFolders.Count == 0 || PacsServers.Count == 0))
             throw new InvalidDataException("Нужна хотя бы одна папка и один PACS.");
         if (ScanIntervalSeconds is < 1 or > 86400 || PacsHealthCheckSeconds is < 10 or > 3600 || FileStableSeconds is < 0 or > 86400 ||
             RetryFailedAfterSeconds is < 1 or > 86400 || MaxSendAttempts is < 1 or > 100)

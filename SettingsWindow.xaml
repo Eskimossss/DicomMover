@@ -8,7 +8,6 @@
     <Window.Resources>
         <local:ZeroToEmptyConverter x:Key="ZeroToEmptyConverter"/>
         <local:PacsEndpointConverter x:Key="PacsEndpointConverter"/>
-        <Style TargetType="Button"><Setter Property="Padding" Value="13,7"/><Setter Property="Margin" Value="4,0"/><Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="#CBD5E1"/></Style>
         <Style TargetType="TextBox"><Setter Property="Padding" Value="8,5"/><Setter Property="Margin" Value="0,3,0,10"/><Setter Property="BorderBrush" Value="#CBD5E1"/></Style>
         <Style TargetType="ComboBox"><Setter Property="Padding" Value="7,5"/><Setter Property="Margin" Value="0,3,0,10"/></Style>
         <Style x:Key="LabelStyle" TargetType="TextBlock"><Setter Property="Foreground" Value="#475467"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
@@ -21,7 +20,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabItem">
-                        <Border x:Name="TabBorder" Background="Transparent" BorderBrush="Transparent" Margin="2,2,8,4"
+                        <Border x:Name="TabBorder" Background="#F8FBFF" BorderBrush="#CBD5E1" Margin="2,2,8,4"
                                 BorderThickness="1" CornerRadius="7" Padding="13,7">
                             <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
@@ -45,7 +44,7 @@
         <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="#E2E8F0" BorderThickness="1,1,1,0" Padding="10" Margin="0,12,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Отмена" IsCancel="True"/>
-                <Button Content="Сохранить" Click="Save_Click" Background="#2563EB" Foreground="White" BorderBrush="#2563EB" FontWeight="SemiBold" Padding="20,8"/>
+                <Button Content="Сохранить" Click="Save_Click" FontWeight="SemiBold" Padding="20,8"/>
             </StackPanel>
         </Border>
 
@@ -72,6 +71,10 @@
                             <CheckBox Content="Искать DICOM в подпапках" IsChecked="{Binding SearchSubfolders}" Margin="0,0,0,14"/>
                             <TextBlock Text="Отправлять исследования с даты" Style="{StaticResource LabelStyle}"/>
                             <DatePicker SelectedDate="{Binding SendStudiesFromDate}" Margin="0,3,0,2"/><TextBlock Text="Используется DICOM Study Date (0008,0020). Пустое поле отключает ограничение." Style="{StaticResource HintStyle}" Margin="0,5,0,10"/>
+                            <CheckBox IsChecked="{Binding IgnoreSopInstanceUidDuplicates}" Margin="0,0,0,3" ToolTip="Сравнивать файлы по SHA-256. Для аппаратов, записывающих одинаковый SOP Instance UID в разные снимки."><TextBlock Text="Игнорировать SOP Instance UID при поиске дубликатов" TextWrapping="Wrap"/></CheckBox>
+                            <TextBlock Text="Сравнивать файлы по SHA-256. Для аппаратов, записывающих одинаковый SOP Instance UID в разные снимки." Style="{StaticResource HintStyle}" Margin="20,0,0,10"/>
+                            <CheckBox IsChecked="{Binding RepairInvalidDicomUids}" Margin="0,0,0,3"><TextBlock Text="Исправлять некорректные UID перед отправкой" TextWrapping="Wrap"/></CheckBox>
+                            <TextBlock Text="Сохраняет SOP Class UID. Заменяет некорректные SOP/Study/Series Instance UID постоянными значениями по SHA-256. При нулевых UID каждый файл — отдельное исследование. Даты с точками преобразуются в DICOM-формат только в отправляемой копии." Style="{StaticResource HintStyle}" Margin="20,0,0,14"/>
                             <TextBlock Text="PACS назначения" Style="{StaticResource LabelStyle}"/><ItemsControl x:Name="FolderPacsPanel" Margin="0,5,0,14"/>
                             <TextBlock Text="После успешной отправки" Style="{StaticResource LabelStyle}"/>
                             <ComboBox x:Name="PostActionCombo" SelectedValue="{Binding PostSendAction}" SelectedValuePath="Value" DisplayMemberPath="Name" SelectionChanged="PostActionCombo_SelectionChanged"/>
@@ -109,7 +112,7 @@
                         <TextBlock Text="AE Title содержит не более 16 символов." Style="{StaticResource HintStyle}"/>
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Таймаут подключения, сек." Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding ConnectionTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}"/><TextBlock Text="Сколько ждать установления DICOM-соединения. После таймаута PACS считается временно недоступным." Style="{StaticResource HintStyle}"/></StackPanel><StackPanel Grid.Column="2"><TextBlock Text="Таймаут отправки, сек." Style="{StaticResource LabelStyle}"/><TextBox Text="{Binding SendTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}"/><TextBlock Text="Максимальное время C-STORE одного файла. После таймаута отправка считается неуспешной." Style="{StaticResource HintStyle}"/></StackPanel></Grid>
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                            <Button Content="Проверить C-ECHO" Background="#2563EB" Foreground="White" Click="Echo_Click"/>
+                            <Button Content="Проверить C-ECHO" Click="Echo_Click"/>
                             <Button Content="Отправить сохранённые исследования…" Margin="10,0,0,0" Click="SendHistoricalStudiesForPacs_Click" ToolTip="Открыть мастер отправки сохранённых исследований на этот PACS"/>
                         </StackPanel>
                     </StackPanel></ScrollViewer></Border>
@@ -202,7 +205,7 @@
                             <Separator Margin="0,8,0,12"/>
                             <TextBlock Text="Диагностика DICOM-текста" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,8"/>
                             <WrapPanel Margin="0,0,0,10">
-                                <Button Content="Проверить папку" Click="DiagnoseFolder_Click" Background="#2563EB" Foreground="White"/>
+                                <Button Content="Проверить папку" Click="DiagnoseFolder_Click"/>
                                 <Button x:Name="ApplyRecommendationButton" Content="Применить рекомендацию" Click="ApplyRecommendation_Click" IsEnabled="False"/>
                                 <Button Content="Проверить преобразование" Click="PreviewConversion_Click"/>
                             </WrapPanel>

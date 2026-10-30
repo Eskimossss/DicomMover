@@ -632,7 +632,7 @@ public partial class SettingsWindow : Window
                 throw new InvalidDataException($"Для папки «{folder.Name}»: задержка удаления пустых подпапок должна быть от 5 до 1440 минут.");
         }
 
-        Result.Validate();
+        Result.Validate(throwOnDuplicatePacs: true, requireConfigured: false);
     }
 
     private void ExportSettings_Click(object sender, RoutedEventArgs e)

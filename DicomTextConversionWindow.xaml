@@ -4,7 +4,6 @@
         Title="Проверка преобразования DICOM-текста" Width="1260" Height="680" MinWidth="900" MinHeight="480"
         Icon="Assets/dicommover.ico" WindowStartupLocation="CenterOwner" Background="#F4F7FB" FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
-        <Style TargetType="Button"><Setter Property="Padding" Value="13,7"/><Setter Property="Margin" Value="4,0"/><Setter Property="Background" Value="White"/><Setter Property="BorderBrush" Value="#CBD5E1"/></Style>
         <Style x:Key="CellText" TargetType="TextBlock"><Setter Property="Padding" Value="5,3"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="ToolTip" Value="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/></Style>
     </Window.Resources>
     <DockPanel Margin="14">

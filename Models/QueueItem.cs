@@ -36,6 +36,9 @@ public sealed class QueueItem
 
 public sealed class DicomMetadata
 {
+    public string? OriginalSopInstanceUid { get; set; }
+    public string? SopClassUid { get; set; }
+    public string? SeriesInstanceUid { get; set; }
     public string SopInstanceUid { get; set; } = string.Empty;
     public string PatientName { get; set; } = string.Empty;
     public string? PatientId { get; set; }

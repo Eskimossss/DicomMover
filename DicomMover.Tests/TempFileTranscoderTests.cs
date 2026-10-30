@@ -7,6 +7,10 @@ using Xunit;
 
 namespace DicomMover.Tests;
 
+[CollectionDefinition("TempFileManager overrides", DisableParallelization = true)]
+public sealed class TempFileManagerCollection;
+
+[Collection("TempFileManager overrides")]
 public sealed class TempFileTranscoderTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "TempTranscoderTests-" + Guid.NewGuid().ToString("N"));

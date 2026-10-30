@@ -7,35 +7,6 @@
         Background="{DynamicResource WindowBackgroundBrush}" Foreground="{DynamicResource TextBrush}"
         FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
-        <Style TargetType="Button">
-            <Setter Property="Padding" Value="13,7"/>
-            <Setter Property="Margin" Value="4,0"/>
-            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
-            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Style.Triggers>
-                <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Opacity" Value="0.55"/>
-                    <Setter Property="Cursor" Value="Arrow"/>
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Background" Value="{DynamicResource PrimaryBrush}"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource PrimaryBrush}"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Padding" Value="18,9"/>
-            <Style.Triggers>
-                <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Opacity" Value="0.55"/>
-                    <Setter Property="Background" Value="{DynamicResource ControlBorderBrush}"/>
-                    <Setter Property="BorderBrush" Value="{DynamicResource ControlBorderBrush}"/>
-                </Trigger>
-            </Style.Triggers>
-        </Style>
         <Style TargetType="TextBox">
             <Setter Property="Padding" Value="8,5"/>
             <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}"/>

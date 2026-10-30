@@ -108,7 +108,9 @@ public partial class MainWindow : Window
     {
         if (_logger is not null) _logger.MessageWritten -= Logger_MessageWritten;
         if (_monitor is not null) _monitor.PacsAvailabilityChanged -= Monitor_PacsAvailabilityChanged;
-        runtimeSettings.Validate();
+        // История и журнал доступны и до добавления первой папки/PACS.
+        // Готовность к мониторингу отдельно проверяется при запуске.
+        runtimeSettings.Validate(throwOnDuplicatePacs: true, requireConfigured: false);
         runtimeSettings.DatabaseFile = AppPaths.Resolve(runtimeSettings.DatabaseFile);
         runtimeSettings.LogFile = AppPaths.Resolve(runtimeSettings.LogFile);
         _logger = new AppLogger(runtimeSettings.LogFile);
@@ -181,8 +183,7 @@ public partial class MainWindow : Window
             _monitorTask = Task.Run(() => _monitor!.RunAsync(_cts.Token));
             StartButton.IsEnabled = true;
             StartButton.Content = "■  Остановить мониторинг";
-            StartButton.Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(220, 38, 38));
-            StartButton.BorderBrush = StartButton.Background;
+            StartButton.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "ErrorTextBrush");
             StatusIndicator.Fill = new SolidColorBrush(System.Windows.Media.Color.FromRgb(22, 163, 74));
             StatusText.Text = "Мониторинг активен";
             StatusBadge.SetResourceReference(Border.BackgroundProperty, "StatusActiveBackgroundBrush");
@@ -194,8 +195,7 @@ public partial class MainWindow : Window
             _monitorTask = null;
             StartButton.IsEnabled = true;
             StartButton.Content = "▶  Запустить мониторинг";
-            StartButton.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "PrimaryBrush");
-            StartButton.SetResourceReference(System.Windows.Controls.Control.BorderBrushProperty, "PrimaryBrush");
+            StartButton.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextBrush");
             MessageBox.Show(ex.Message, "Не удалось запустить мониторинг", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
@@ -299,8 +299,7 @@ public partial class MainWindow : Window
             _cts = null;
             StartButton.IsEnabled = true;
             StartButton.Content = "▶  Запустить мониторинг";
-            StartButton.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "PrimaryBrush");
-            StartButton.SetResourceReference(System.Windows.Controls.Control.BorderBrushProperty, "PrimaryBrush");
+            StartButton.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "TextBrush");
             StatusIndicator.Fill = new SolidColorBrush(System.Windows.Media.Color.FromRgb(138, 148, 163));
             StatusText.Text = "Мониторинг остановлен";
             StatusBadge.SetResourceReference(Border.BackgroundProperty, "StatusStoppedBackgroundBrush");

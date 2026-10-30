@@ -33,7 +33,7 @@ public sealed class Database
         using var command = connection.CreateCommand();
 
         command.CommandText =
-            "SELECT EXISTS(SELECT 1 FROM queue_items WHERE file_key = $key);";
+            "SELECT EXISTS(SELECT 1 FROM queue_items WHERE file_key = $key UNION ALL SELECT 1 FROM sent_file_hashes WHERE file_key=$key);";
         command.Parameters.AddWithValue("$key", fileKey);
 
         return Convert.ToInt32(command.ExecuteScalar()) == 1;
@@ -79,7 +79,8 @@ public sealed class Database
         string? patientName,
         string folderId,
         IReadOnlyCollection<PacsSettings> destinations,
-        DicomMetadata? metadata = null)
+        DicomMetadata? metadata = null,
+        bool repairUids = false)
     {
         using var connection = Open();
         using var transaction = connection.BeginTransaction();
@@ -89,9 +90,9 @@ public sealed class Database
             INSERT OR IGNORE INTO queue_items
             (file_key, file_path, status, attempt_count, discovered_at_utc,
              sop_instance_uid, patient_name, folder_id, patient_id, patient_birth_date,
-             modality, study_instance_uid, accession_number, study_date)
+             modality, study_instance_uid, accession_number, study_date, original_sop_instance_uid, repair_uids)
             VALUES ($key, $path, 'Pending', 0, $now, $uid, $patientName, $folderId,
-                    $patientId,$birthDate,$modality,$studyUid,$accession,$studyDate);
+                    $patientId,$birthDate,$modality,$studyUid,$accession,$studyDate,$originalUid,$repairUids);
             SELECT id FROM queue_items WHERE file_key=$key;
             """;
         command.Parameters.AddWithValue("$key", fileKey);
@@ -100,12 +101,14 @@ public sealed class Database
         command.Parameters.AddWithValue("$uid", sopInstanceUid);
         command.Parameters.AddWithValue("$patientName", (object?)patientName ?? DBNull.Value);
         command.Parameters.AddWithValue("$folderId", folderId);
+        command.Parameters.AddWithValue("$originalUid", metadata?.OriginalSopInstanceUid ?? sopInstanceUid);
+        command.Parameters.AddWithValue("$repairUids", repairUids ? 1 : 0);
         command.Parameters.AddWithValue("$patientId", (object?)metadata?.PatientId ?? DBNull.Value);
         command.Parameters.AddWithValue("$birthDate", (object?)metadata?.PatientBirthDate ?? DBNull.Value);
         command.Parameters.AddWithValue("$modality", (object?)metadata?.Modality ?? DBNull.Value);
         command.Parameters.AddWithValue("$studyUid", (object?)metadata?.StudyInstanceUid ?? DBNull.Value);
         command.Parameters.AddWithValue("$accession", (object?)metadata?.AccessionNumber ?? DBNull.Value);
-        command.Parameters.AddWithValue("$studyDate", (object?)metadata?.StudyDate ?? DBNull.Value);
+        command.Parameters.AddWithValue("$studyDate", (object?)(DicomStudyDate.Normalize(metadata?.StudyDate) ?? metadata?.StudyDate) ?? DBNull.Value);
         var queueItemId = Convert.ToInt64(command.ExecuteScalar());
 
         foreach (var pacs in destinations)
@@ -123,6 +126,43 @@ public sealed class Database
             delivery.ExecuteNonQuery();
         }
 
+        transaction.Commit();
+    }
+
+    internal (string FileKey, bool RepairUids)? GetCompatibilityState(long itemId)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT file_key, repair_uids FROM queue_items WHERE id=$id;";
+        command.Parameters.AddWithValue("$id", itemId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? (reader.GetString(0), reader.GetInt32(1) != 0) : null;
+    }
+
+    // Adopt an existing entry by its original path/length/mtime key, retaining delivery history.
+    internal void ApplyCompatibilityIdentity(string legacyKey, string contentKey, DicomMetadata metadata, bool repairUids)
+    {
+        using var connection = Open();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE queue_items SET file_key=$key
+            WHERE file_key=$legacy AND NOT EXISTS(SELECT 1 FROM queue_items WHERE file_key=$key);
+            UPDATE queue_items
+            SET original_sop_instance_uid=COALESCE(original_sop_instance_uid,sop_instance_uid),
+                sop_instance_uid=$uid, study_instance_uid=$studyUid, repair_uids=1
+            WHERE file_key=$key AND $repair=1 AND repair_uids=0 AND status NOT IN ('Sent','Sending');
+            INSERT OR IGNORE INTO sent_file_hashes(file_key,first_sent_at_utc)
+            SELECT file_key,COALESCE(sent_at_utc,discovered_at_utc) FROM queue_items
+            WHERE file_key=$key AND status='Sent';
+            """;
+        command.Parameters.AddWithValue("$legacy", legacyKey);
+        command.Parameters.AddWithValue("$key", contentKey);
+        command.Parameters.AddWithValue("$uid", metadata.SopInstanceUid);
+        command.Parameters.AddWithValue("$studyUid", (object?)metadata.StudyInstanceUid ?? DBNull.Value);
+        command.Parameters.AddWithValue("$repair", repairUids ? 1 : 0);
+        command.ExecuteNonQuery();
         transaction.Commit();
     }
 
@@ -201,6 +241,8 @@ public sealed class Database
                 next_attempt_at_utc=NULL, last_error=NULL WHERE id=$id;
             INSERT OR IGNORE INTO sent_sop_instances(sop_instance_uid,first_sent_at_utc)
             SELECT sop_instance_uid,$now FROM queue_items WHERE id=$itemId AND sop_instance_uid IS NOT NULL;
+            INSERT OR IGNORE INTO sent_file_hashes(file_key,first_sent_at_utc)
+            SELECT file_key,$now FROM queue_items WHERE id=$itemId AND file_key LIKE 'SHA256:%';
             DELETE FROM delivery_encoding_overrides WHERE delivery_id=$id;
             """, command =>
         {
@@ -454,10 +496,10 @@ public int RetryFailedAndStuck()
             filter.CommandText = """
                 UPDATE queue_items SET is_archived=1,is_date_filtered=1
                 WHERE folder_id=$folder AND status<>'Sent'
-                  AND (study_date IS NULL OR study_date='' OR study_date < $date);
+                  AND (normalize_study_date(study_date) IS NULL OR normalize_study_date(study_date) < $date);
                 """;
             filter.Parameters.AddWithValue("$folder", folder.Id);
-            filter.Parameters.AddWithValue("$date", folder.SendStudiesFromDate!.Value.ToString("yyyyMMdd"));
+            filter.Parameters.AddWithValue("$date", DicomStudyDate.Format(folder.SendStudiesFromDate!.Value));
             filter.ExecuteNonQuery();
         }
         transaction.Commit();
@@ -809,6 +851,11 @@ public int RetryFailedAndStuck()
             first_sent_at_utc TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS sent_file_hashes (
+            file_key TEXT PRIMARY KEY,
+            first_sent_at_utc TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS operational_problems (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             problem_key TEXT NOT NULL UNIQUE,
@@ -884,6 +931,8 @@ public int RetryFailedAndStuck()
     EnsureColumn("study_instance_uid", "TEXT NULL");
     EnsureColumn("accession_number", "TEXT NULL");
     EnsureColumn("study_date", "TEXT NULL");
+    EnsureColumn("original_sop_instance_uid", "TEXT NULL");
+    EnsureColumn("repair_uids", "INTEGER NOT NULL DEFAULT 0");
 
 }
 private void EnsureColumn(string columnName, string definition)
@@ -925,6 +974,7 @@ private void EnsureColumn(string columnName, string definition)
     {
         var connection = new SqliteConnection(_connectionString);
         connection.Open();
+        connection.CreateFunction<string?, string?>("normalize_study_date", DicomStudyDate.Normalize, isDeterministic: true);
         using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;";
         command.ExecuteNonQuery();
@@ -1251,8 +1301,8 @@ private void EnsureColumn(string columnName, string definition)
             FROM queue_items q
             WHERE ($folderId IS NULL OR q.folder_id = $folderId)
               AND ($modality IS NULL OR q.modality = $modality)
-              AND ($fromDate IS NULL OR (q.study_date IS NOT NULL AND q.study_date >= $fromDate))
-              AND ($toDate IS NULL OR (q.study_date IS NOT NULL AND q.study_date <= $toDate))
+              AND ($fromDate IS NULL OR normalize_study_date(q.study_date) >= $fromDate)
+              AND ($toDate IS NULL OR normalize_study_date(q.study_date) <= $toDate)
               AND NOT EXISTS (
                   SELECT 1 FROM queue_deliveries d
                   WHERE d.queue_item_id = q.id AND d.pacs_id = $targetPacsId
@@ -1261,8 +1311,8 @@ private void EnsureColumn(string columnName, string definition)
             """;
         command.Parameters.AddWithValue("$folderId", (object?)folderId ?? DBNull.Value);
         command.Parameters.AddWithValue("$modality", (object?)modality ?? DBNull.Value);
-        command.Parameters.AddWithValue("$fromDate", fromDate.HasValue ? fromDate.Value.ToString("yyyyMMdd") : (object)DBNull.Value);
-        command.Parameters.AddWithValue("$toDate", toDate.HasValue ? toDate.Value.ToString("yyyyMMdd") : (object)DBNull.Value);
+        command.Parameters.AddWithValue("$fromDate", fromDate.HasValue ? DicomStudyDate.Format(fromDate.Value) : (object)DBNull.Value);
+        command.Parameters.AddWithValue("$toDate", toDate.HasValue ? DicomStudyDate.Format(toDate.Value) : (object)DBNull.Value);
         command.Parameters.AddWithValue("$targetPacsId", targetPacsId);
 
         using var reader = command.ExecuteReader();
@@ -1324,8 +1374,8 @@ private void EnsureColumn(string columnName, string definition)
                 FROM queue_items q
                 WHERE ($folderId IS NULL OR q.folder_id = $folderId)
                   AND ($modality IS NULL OR q.modality = $modality)
-                  AND ($fromDate IS NULL OR (q.study_date IS NOT NULL AND q.study_date >= $fromDate))
-                  AND ($toDate IS NULL OR (q.study_date IS NOT NULL AND q.study_date <= $toDate))
+                  AND ($fromDate IS NULL OR normalize_study_date(q.study_date) >= $fromDate)
+                  AND ($toDate IS NULL OR normalize_study_date(q.study_date) <= $toDate)
                   AND NOT EXISTS (
                       SELECT 1 FROM queue_deliveries d
                       WHERE d.queue_item_id = q.id AND d.pacs_id = $pacsId
@@ -1333,8 +1383,8 @@ private void EnsureColumn(string columnName, string definition)
                 """;
             selectCmd.Parameters.AddWithValue("$folderId", (object?)folderId ?? DBNull.Value);
             selectCmd.Parameters.AddWithValue("$modality", (object?)modality ?? DBNull.Value);
-            selectCmd.Parameters.AddWithValue("$fromDate", fromDate.HasValue ? fromDate.Value.ToString("yyyyMMdd") : (object)DBNull.Value);
-            selectCmd.Parameters.AddWithValue("$toDate", toDate.HasValue ? toDate.Value.ToString("yyyyMMdd") : (object)DBNull.Value);
+            selectCmd.Parameters.AddWithValue("$fromDate", fromDate.HasValue ? DicomStudyDate.Format(fromDate.Value) : (object)DBNull.Value);
+            selectCmd.Parameters.AddWithValue("$toDate", toDate.HasValue ? DicomStudyDate.Format(toDate.Value) : (object)DBNull.Value);
             selectCmd.Parameters.AddWithValue("$pacsId", targetPacs.Id);
 
             using var reader = selectCmd.ExecuteReader();
