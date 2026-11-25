@@ -90,9 +90,9 @@ public sealed class Database
             INSERT OR IGNORE INTO queue_items
             (file_key, file_path, status, attempt_count, discovered_at_utc,
              sop_instance_uid, patient_name, folder_id, patient_id, patient_birth_date,
-             modality, study_instance_uid, accession_number, study_date, original_sop_instance_uid, repair_uids)
+             modality, study_instance_uid, accession_number, study_date, study_time, original_sop_instance_uid, repair_uids)
             VALUES ($key, $path, 'Pending', 0, $now, $uid, $patientName, $folderId,
-                    $patientId,$birthDate,$modality,$studyUid,$accession,$studyDate,$originalUid,$repairUids);
+                    $patientId,$birthDate,$modality,$studyUid,$accession,$studyDate,$studyTime,$originalUid,$repairUids);
             SELECT id FROM queue_items WHERE file_key=$key;
             """;
         command.Parameters.AddWithValue("$key", fileKey);
@@ -109,6 +109,7 @@ public sealed class Database
         command.Parameters.AddWithValue("$studyUid", (object?)metadata?.StudyInstanceUid ?? DBNull.Value);
         command.Parameters.AddWithValue("$accession", (object?)metadata?.AccessionNumber ?? DBNull.Value);
         command.Parameters.AddWithValue("$studyDate", (object?)(DicomStudyDate.Normalize(metadata?.StudyDate) ?? metadata?.StudyDate) ?? DBNull.Value);
+        command.Parameters.AddWithValue("$studyTime", (object?)metadata?.StudyTime ?? DBNull.Value);
         var queueItemId = Convert.ToInt64(command.ExecuteScalar());
 
         foreach (var pacs in destinations)
@@ -321,6 +322,16 @@ public sealed class Database
         return Convert.ToInt32(command.ExecuteScalar()) == 1;
     }
 
+    public bool HasSkippedDuplicateDeliveries(long queueItemId)
+    {
+        using var connection = Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM queue_deliveries WHERE queue_item_id=$id AND pacs_status LIKE $prefix);";
+        command.Parameters.AddWithValue("$id", queueItemId);
+        command.Parameters.AddWithValue("$prefix", PacsDuplicateClassifier.SkippedPrefix + "%");
+        return Convert.ToInt32(command.ExecuteScalar()) == 1;
+    }
+
     private void RecalculateQueueItem(long queueItemId)
     {
         Execute("""
@@ -481,7 +492,16 @@ public int RetryFailedAndStuck()
 
     public void ApplyStudyDateFilters(IEnumerable<WatchFolderSettings> folders)
     {
+        var active = folders.Where(f => f.Enabled)
+            .Select(f => (Folder: f, Range: StudyDateRange.FromFolder(f))).Where(f => f.Range.IsActive).ToArray();
         using var connection = Open();
+        // Older queues have no Study Time. Read it once from the original file when needed.
+        foreach (var (folder, range) in active)
+        {
+            if (range.From?.TimeOfDay is { Ticks: > 0 } ||
+                (range.To.HasValue && range.To.Value.TimeOfDay != TimeSpan.FromDays(1).Subtract(TimeSpan.FromTicks(1))))
+                BackfillStudyTimes(connection, folder.Id);
+        }
         using var transaction = connection.BeginTransaction();
         using (var restore = connection.CreateCommand())
         {
@@ -489,20 +509,41 @@ public int RetryFailedAndStuck()
             restore.CommandText = "UPDATE queue_items SET is_archived=0,is_date_filtered=0 WHERE is_date_filtered=1 AND status<>'Sent';";
             restore.ExecuteNonQuery();
         }
-        foreach (var folder in folders.Where(f => f.Enabled && f.SendStudiesFromDate.HasValue))
+        foreach (var (folder, range) in active)
         {
             using var filter = connection.CreateCommand();
             filter.Transaction = transaction;
             filter.CommandText = """
                 UPDATE queue_items SET is_archived=1,is_date_filtered=1
                 WHERE folder_id=$folder AND status<>'Sent'
-                  AND (normalize_study_date(study_date) IS NULL OR normalize_study_date(study_date) < $date);
+                  AND NOT study_in_range(study_date, study_time, $from, $to);
                 """;
             filter.Parameters.AddWithValue("$folder", folder.Id);
-            filter.Parameters.AddWithValue("$date", DicomStudyDate.Format(folder.SendStudiesFromDate!.Value));
+            filter.Parameters.AddWithValue("$from", (object?)range.From?.Ticks ?? DBNull.Value);
+            filter.Parameters.AddWithValue("$to", (object?)range.To?.Ticks ?? DBNull.Value);
             filter.ExecuteNonQuery();
         }
         transaction.Commit();
+    }
+
+    private static void BackfillStudyTimes(SqliteConnection connection, string folderId)
+    {
+        using var select = connection.CreateCommand();
+        select.CommandText = "SELECT id,file_path FROM queue_items WHERE folder_id=$folder AND status<>'Sent' AND study_time IS NULL;";
+        select.Parameters.AddWithValue("$folder", folderId);
+        var files = new List<(long Id, string Path)>();
+        using (var reader = select.ExecuteReader())
+            while (reader.Read()) files.Add((reader.GetInt64(0), reader.GetString(1)));
+        foreach (var (id, path) in files)
+        {
+            var inspection = FolderMonitor.InspectDicomFile(path, allowMissingInstanceUid: true);
+            if (inspection.Metadata is not { } metadata) continue;
+            using var update = connection.CreateCommand();
+            update.CommandText = "UPDATE queue_items SET study_time=$time WHERE id=$id;";
+            update.Parameters.AddWithValue("$id", id);
+            update.Parameters.AddWithValue("$time", metadata.StudyTime ?? string.Empty);
+            update.ExecuteNonQuery();
+        }
     }
 
     public QueueItem? GetItem(long id)
@@ -537,7 +578,9 @@ public int RetryFailedAndStuck()
         {
             Id = reader.GetInt64(0),
             PacsName = reader.GetString(1),
-            Status = TranslateDeliveryStatus(reader.GetString(2)),
+            Status = reader.GetString(2) == "Sent" && !reader.IsDBNull(6) &&
+                     reader.GetString(6).StartsWith(PacsDuplicateClassifier.SkippedPrefix, StringComparison.Ordinal)
+                ? "Дубликат пропущен" : TranslateDeliveryStatus(reader.GetString(2)),
             AttemptCount = reader.GetInt32(3),
             LastAttemptAtUtc = reader.IsDBNull(4) ? null : DateTime.Parse(reader.GetString(4)).ToLocalTime(),
             SentAtUtc = reader.IsDBNull(5) ? null : DateTime.Parse(reader.GetString(5)).ToLocalTime(),
@@ -931,6 +974,7 @@ public int RetryFailedAndStuck()
     EnsureColumn("study_instance_uid", "TEXT NULL");
     EnsureColumn("accession_number", "TEXT NULL");
     EnsureColumn("study_date", "TEXT NULL");
+    EnsureColumn("study_time", "TEXT NULL");
     EnsureColumn("original_sop_instance_uid", "TEXT NULL");
     EnsureColumn("repair_uids", "INTEGER NOT NULL DEFAULT 0");
 
@@ -975,6 +1019,10 @@ private void EnsureColumn(string columnName, string definition)
         var connection = new SqliteConnection(_connectionString);
         connection.Open();
         connection.CreateFunction<string?, string?>("normalize_study_date", DicomStudyDate.Normalize, isDeterministic: true);
+        connection.CreateFunction<string?, string?, long?, long?, bool>("study_in_range", (date, time, from, to) =>
+            DicomStudyDate.IsInRange(date, time, new StudyDateRange(
+                from.HasValue ? new DateTime(from.Value) : null,
+                to.HasValue ? new DateTime(to.Value) : null)), isDeterministic: true);
         using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;";
         command.ExecuteNonQuery();

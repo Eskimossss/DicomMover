@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:DicomMover"
+        xmlns:controls="clr-namespace:DicomMover.Controls"
         Title="Настройки DicomMover" Width="980" Height="720" MinWidth="820" MinHeight="600"
         Icon="Assets/dicommover.ico" WindowStartupLocation="CenterOwner"
         Background="#F4F7FB" FontFamily="Segoe UI" FontSize="13">
@@ -69,8 +70,22 @@
                             <TextBlock Text="Путь" Style="{StaticResource LabelStyle}"/>
                             <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBox x:Name="FolderPathText" Text="{Binding Path, UpdateSourceTrigger=PropertyChanged}"/><Button Grid.Column="1" Content="Выбрать…" Margin="8,3,0,10" Click="BrowseFolder_Click"/></Grid>
                             <CheckBox Content="Искать DICOM в подпапках" IsChecked="{Binding SearchSubfolders}" Margin="0,0,0,14"/>
-                            <TextBlock Text="Отправлять исследования с даты" Style="{StaticResource LabelStyle}"/>
-                            <DatePicker SelectedDate="{Binding SendStudiesFromDate}" Margin="0,3,0,2"/><TextBlock Text="Используется DICOM Study Date (0008,0020). Пустое поле отключает ограничение." Style="{StaticResource HintStyle}" Margin="0,5,0,10"/>
+                            <TextBlock Text="Период исследований" Style="{StaticResource LabelStyle}" Margin="0,0,0,6"/>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/><ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/><ColumnDefinition/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="С" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="#475467"/>
+                                <controls:StudyDateTimePicker Grid.Column="1"
+                                    SelectedDate="{Binding SendStudiesFromDate}" SelectedTime="{Binding SendStudiesFromTime}"/>
+                                <TextBlock Grid.Column="2" Text="До" VerticalAlignment="Center" Margin="12,0,8,0" Foreground="#475467"/>
+                                <controls:StudyDateTimePicker Grid.Column="3" IsUpperBound="True"
+                                    SelectedDate="{Binding SendStudiesToDate}" SelectedTime="{Binding SendStudiesToTime}"/>
+                            </Grid>
+                            <TextBlock Text="Дата и время выбираются в календаре. «Сбросить» убирает границу. Без времени — с начала / до конца дня. Обе границы включаются."
+                                       ToolTip="Используются DICOM Study Date (0008,0020) и Study Time (0008,0030). Если время исследования неизвестно, оно проходит только когда весь день входит в период."
+                                       Style="{StaticResource HintStyle}" Margin="0,0,0,12"/>
                             <CheckBox IsChecked="{Binding IgnoreSopInstanceUidDuplicates}" Margin="0,0,0,3" ToolTip="Сравнивать файлы по SHA-256. Для аппаратов, записывающих одинаковый SOP Instance UID в разные снимки."><TextBlock Text="Игнорировать SOP Instance UID при поиске дубликатов" TextWrapping="Wrap"/></CheckBox>
                             <TextBlock Text="Сравнивать файлы по SHA-256. Для аппаратов, записывающих одинаковый SOP Instance UID в разные снимки." Style="{StaticResource HintStyle}" Margin="20,0,0,10"/>
                             <CheckBox IsChecked="{Binding RepairInvalidDicomUids}" Margin="0,0,0,3"><TextBlock Text="Исправлять некорректные UID перед отправкой" TextWrapping="Wrap"/></CheckBox>
@@ -223,6 +238,8 @@
                 <TextBlock Text="Интервал проверки PACS" Style="{StaticResource LabelStyle}"/><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition/></Grid.ColumnDefinitions><TextBox x:Name="PacsHealthCheckText"/><TextBlock Grid.Column="1" Text="секунд" VerticalAlignment="Center" Margin="8,-7,0,0"/></Grid><TextBlock Text="Как часто выполнять C-ECHO для включённых PACS. Работает независимо от проверки папок; первая проверка выполняется сразу после запуска мониторинга. Допустимо от 10 до 3600 секунд." Style="{StaticResource HintStyle}"/>
                 <TextBlock Text="Время стабильности файла" Style="{StaticResource LabelStyle}"/><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="140"/><ColumnDefinition/></Grid.ColumnDefinitions><TextBox x:Name="StableTimeText"/><TextBlock Grid.Column="1" Text="секунд" VerticalAlignment="Center" Margin="8,-7,0,0"/></Grid><TextBlock Text="Файл обрабатывается только после того, как его перестали изменять." Style="{StaticResource HintStyle}"/>
                 <TextBlock Text="Максимум ошибок C-STORE" Style="{StaticResource LabelStyle}"/><TextBox x:Name="MaxAttemptsText" Width="140" HorizontalAlignment="Left"/><TextBlock Text="После достижения лимита автоматические повторы прекращаются. Недоступность сети или PACS этот лимит не расходует." Style="{StaticResource HintStyle}"/>
+                <CheckBox x:Name="SkipDuplicatesCheck" Content="Пропускать дубликаты, отклонённые PACS" Margin="0,12,0,4"/>
+                <TextBlock Text="Явный ответ PACS о дубликате завершает доставку без ошибки и повторов. Причина сохраняется в журнале и деталях. Исходный файл сохраняется, даже если выбрано удаление или архивирование. Остальные отказы обрабатываются как ошибки." Style="{StaticResource HintStyle}"/>
             </StackPanel></Border></TabItem>
 
             <TabItem Header="Журнал"><Border Style="{StaticResource Card}" Margin="14" MaxWidth="700" HorizontalAlignment="Left"><StackPanel>

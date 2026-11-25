@@ -47,6 +47,7 @@ public sealed class DicomMetadata
     public string? StudyInstanceUid { get; set; }
     public string? AccessionNumber { get; set; }
     public string? StudyDate { get; set; }
+    public string? StudyTime { get; set; }
 }
 
 public sealed class DeliveryItem

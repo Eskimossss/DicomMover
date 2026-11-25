@@ -122,6 +122,9 @@ public sealed class WatchFolderSettings
     public bool DeleteEmptySubfolders { get; set; }
     public int EmptyFolderCleanupDelayMinutes { get; set; } = 30;
     public DateTime? SendStudiesFromDate { get; set; }
+    public string? SendStudiesFromTime { get; set; }
+    public DateTime? SendStudiesToDate { get; set; }
+    public string? SendStudiesToTime { get; set; }
     public bool IgnoreSopInstanceUidDuplicates { get; set; }
     public bool RepairInvalidDicomUids { get; set; }
 
@@ -139,6 +142,9 @@ public sealed class WatchFolderSettings
         DeleteEmptySubfolders = DeleteEmptySubfolders,
         EmptyFolderCleanupDelayMinutes = EmptyFolderCleanupDelayMinutes,
         SendStudiesFromDate = SendStudiesFromDate,
+        SendStudiesFromTime = SendStudiesFromTime,
+        SendStudiesToDate = SendStudiesToDate,
+        SendStudiesToTime = SendStudiesToTime,
         IgnoreSopInstanceUidDuplicates = IgnoreSopInstanceUidDuplicates,
         RepairInvalidDicomUids = RepairInvalidDicomUids
     };
@@ -153,6 +159,7 @@ public sealed class AppSettings
     public int FileStableSeconds { get; set; } = 10;
     public int RetryFailedAfterSeconds { get; set; } = 60;
     public int MaxSendAttempts { get; set; } = 5;
+    public bool SkipPacsDuplicates { get; set; }
     public int UiRetentionHours { get; set; } = 8;
     public int LogRetentionDays { get; set; } = 30;
     public int DatabaseRetentionDays { get; set; } = 365;
@@ -261,6 +268,7 @@ public sealed class AppSettings
         FileStableSeconds = FileStableSeconds,
         RetryFailedAfterSeconds = RetryFailedAfterSeconds,
         MaxSendAttempts = MaxSendAttempts,
+        SkipPacsDuplicates = SkipPacsDuplicates,
         UiRetentionHours = UiRetentionHours,
         LogRetentionDays = LogRetentionDays,
         DatabaseRetentionDays = DatabaseRetentionDays,
@@ -363,6 +371,7 @@ public sealed class AppSettings
 
         foreach (var folder in WatchFolders)
         {
+            _ = StudyDateRange.FromFolder(folder);
             if (string.IsNullOrWhiteSpace(folder.Name) || string.IsNullOrWhiteSpace(folder.Path))
                 throw new InvalidDataException("У каждой папки должны быть название и путь.");
             if (folder.Enabled && !folder.PacsIds.Any(id => enabledPacsIds.Contains(id)))

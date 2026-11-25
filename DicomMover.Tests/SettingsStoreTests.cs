@@ -140,7 +140,7 @@ public sealed class SettingsStoreTests
     }
 
     [Fact]
-    public void AssemblyVersion_And_AboutDisplayVersion_Is1_5_4()
+    public void AssemblyVersion_And_AboutDisplayVersion_Is1_5_5()
     {
         var assembly = typeof(AboutWindow).Assembly;
         var version = assembly.GetName().Version!;
@@ -149,8 +149,8 @@ public sealed class SettingsStoreTests
             ? infoVersion.Split('+')[0].Trim()
             : version.ToString(2);
 
-        Assert.Equal("1.5.4.0", version.ToString());
-        Assert.Equal("1.5.4", infoVersion);
-        Assert.Equal("1.5.4", displayVersion);
+        Assert.Equal("1.5.5.0", version.ToString());
+        Assert.Equal("1.5.5", infoVersion);
+        Assert.Equal("1.5.5", displayVersion);
     }
 }

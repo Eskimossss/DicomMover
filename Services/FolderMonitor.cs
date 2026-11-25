@@ -123,6 +123,7 @@ public sealed class FolderMonitor
         var accessErrors = 0;
         var dateFilteredCount = 0;
         var newlyDateFilteredCount = 0;
+        var studyRange = StudyDateRange.FromFolder(folder);
         foreach (var filePath in EnumerateFilesSafely(folder, () => accessErrors++))
         {
             checkedFiles++;
@@ -238,8 +239,7 @@ public sealed class FolderMonitor
                     continue;
                 }
             }
-            if (folder.SendStudiesFromDate is { } fromDate &&
-                (!TryParseDicomDate(metadata.StudyDate, out var studyDate) || studyDate.Date < fromDate.Date))
+            if (!DicomStudyDate.IsInRange(metadata.StudyDate, metadata.StudyTime, studyRange))
             {
                 _dateFilteredFiles.Add(key);
                 dateFilteredCount++;
@@ -258,7 +258,7 @@ public sealed class FolderMonitor
                 : $"Добавлен в очередь: {info.FullName}");
         }
         if (newlyDateFilteredCount > 0)
-            _logger.Info($"Папка «{folder.Name}»: пропущено по дате Study Date: {newlyDateFilteredCount}. Отправляются исследования с {folder.SendStudiesFromDate:dd.MM.yyyy}.");
+            _logger.Info($"Папка «{folder.Name}»: пропущено по диапазону Study Date/Time: {newlyDateFilteredCount}.");
         if (_settings.DetailedLogging)
         {
             started.Stop();
@@ -269,9 +269,6 @@ public sealed class FolderMonitor
         }
         CleanupEmptySubfolders(folder);
     }
-
-    private static bool TryParseDicomDate(string? value, out DateTime date) =>
-        DicomStudyDate.TryParse(value, out date);
 
     internal async Task SendAsync(DeliveryItem delivery, CancellationToken cancellationToken)
     {
@@ -298,6 +295,7 @@ public sealed class FolderMonitor
         _database.MarkDeliverySending(delivery);
         _logger.Info($"Отправка на {pacs.Name}: {delivery.FilePath}");
         DicomStatus? responseStatus = null;
+        string? responseComment = null;
         EncodingRule? encodingRule = null;
         string? tempFilePath = null;
         try
@@ -373,7 +371,11 @@ public sealed class FolderMonitor
                     ? new DicomCStoreRequest(tempFilePath)
                     : new DicomCStoreRequest(transcodeResult.File);
             }
-            request.OnResponseReceived = (_, response) => responseStatus = response.Status;
+            request.OnResponseReceived = (_, response) =>
+            {
+                responseStatus = response.Status;
+                responseComment = response.Command.GetSingleValueOrDefault(DicomTag.ErrorComment, string.Empty);
+            };
             if (transcodeResult is not null)
             {
                 _logger.Info($"Применено правило кодировки «{encodingRule!.Name}»: {transcodeResult.SourceDescription} → {transcodeResult.TargetDescription}; файл: {delivery.FilePath}");
@@ -391,6 +393,15 @@ public sealed class FolderMonitor
                 client.ClientOptions.ConnectionTimeoutInMs = pacs.ConnectionTimeoutSeconds * 1000;
                 await client.AddRequestAsync(request);
                 await client.SendAsync(timeout.Token, DicomClientCancellationMode.ImmediatelyReleaseAssociation);
+            }
+
+            if (_settings.SkipPacsDuplicates && PacsDuplicateClassifier.IsDuplicate(responseStatus, responseComment))
+            {
+                UpdatePacsHealth(pacs, new PacsHealth(true, DateTime.UtcNow, null));
+                _database.MarkDeliverySent(delivery, PacsDuplicateClassifier.SkippedPrefix + responseStatus +
+                    (string.IsNullOrWhiteSpace(responseComment) ? string.Empty : $"; {responseComment}"));
+                _logger.Info($"Дубликат на {pacs.Name} пропущен без повторов: {delivery.FilePath}; {responseStatus}; {responseComment}");
+                return;
             }
 
             if (responseStatus?.State is not (DicomState.Success or DicomState.Warning))
@@ -660,6 +671,8 @@ public sealed class FolderMonitor
 
     private void ProcessSourceAfterAllDeliveries(DeliveryItem delivery)
     {
+        // A duplicate rejection does not confirm that this source has identical pixel data.
+        if (_database.HasSkippedDuplicateDeliveries(delivery.QueueItemId)) return;
         var folder = _settings.WatchFolders.FirstOrDefault(f => f.Id == delivery.FolderId);
         if (folder is null || folder.PostSendAction == PostSendAction.Keep || !IsInside(folder.Path, delivery.FilePath))
             return;
@@ -843,6 +856,7 @@ public sealed class FolderMonitor
             metadata.AccessionNumber = file.Dataset.GetSingleValueOrDefault(DicomTag.AccessionNumber, string.Empty);
             var studyDate = file.Dataset.GetSingleValueOrDefault(DicomTag.StudyDate, string.Empty);
             metadata.StudyDate = DicomStudyDate.Normalize(studyDate) ?? studyDate;
+            metadata.StudyTime = file.Dataset.GetSingleValueOrDefault(DicomTag.StudyTime, string.Empty);
 
             return new DicomFileInspectionResult(DicomFileInspectionStatus.ValidDicom, metadata);
         }

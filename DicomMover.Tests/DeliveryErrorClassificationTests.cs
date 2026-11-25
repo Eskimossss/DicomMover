@@ -243,4 +243,70 @@ public sealed class DeliveryErrorClassificationTests : IDisposable
     {
         try { Directory.Delete(_dir, true); } catch { }
     }
+
+    [Theory]
+    [InlineData(true, "duplicate", null, true)]
+    [InlineData(false, "duplicate", null, false)]
+    [InlineData(true, "failure", "Duplicate SOP Instance", true)]
+    [InlineData(true, "failure", "Duplicate study", true)]
+    [InlineData(true, "failure", "Disk full", false)]
+    [InlineData(true, "failure", null, false)]
+    [InlineData(true, "invocation", "Duplicate SOP Instance", false)]
+    public async Task DuplicateOptionOnlyCompletesExplicitDuplicatesAndPreservesSource(
+        bool enabled, string responseKind, string? comment, bool expectedSkipped)
+    {
+        var (settings, db, logger, folder, pacs) = CreateContext();
+        settings.SkipPacsDuplicates = enabled;
+        folder.PostSendAction = PostSendAction.Delete;
+        var path = CreateDicomFile(folder.Path);
+        db.Enqueue("duplicate", path, "1.2.3", null, folder.Id, [pacs]);
+        db.Enqueue("next", path, "1.2.4", null, folder.Id, [pacs]);
+        var delivery = db.GetNextReadyDelivery()!;
+        var status = responseKind switch
+        {
+            "duplicate" => DicomStatus.DuplicateSOPInstance,
+            "invocation" => DicomStatus.DuplicateInvocation,
+            _ => DicomStatus.ProcessingFailure
+        };
+        var monitor = new FolderMonitor(settings, db, logger)
+        {
+            PacsEchoChecker = (_, _) => Task.FromResult(true),
+            DicomSender = (_, request, _) =>
+            {
+                var response = new DicomCStoreResponse(request, status);
+                if (comment is not null) response.Command.AddOrUpdate(DicomTag.ErrorComment, comment);
+                request.OnResponseReceived(request, response);
+                return Task.FromResult<DicomStatus?>(status);
+            }
+        };
+        await monitor.SendAsync(delivery, CancellationToken.None);
+        var detail = Assert.Single(db.GetDeliveryDetails(delivery.QueueItemId));
+        Assert.Equal(expectedSkipped ? "Дубликат пропущен" : "Ошибка", detail.Status);
+        Assert.Equal(expectedSkipped, db.AreAllDeliveriesSent(delivery.QueueItemId));
+        Assert.True(File.Exists(path));
+        Assert.NotEqual(delivery.Id, db.GetNextReadyDelivery()!.Id);
+        if (expectedSkipped)
+        {
+            Assert.Null(db.GetItem(delivery.QueueItemId)!.LastError);
+            Assert.StartsWith(PacsDuplicateClassifier.SkippedPrefix, detail.PacsStatus);
+            // A success at another PACS must not delete a source rejected as a duplicate elsewhere.
+            var secondPacs = pacs.Copy();
+            secondPacs.Id = "second";
+            settings.PacsServers.Add(secondPacs);
+            var mixedDb = new Database(Path.Combine(_dir, "mixed.db"));
+            mixedDb.Enqueue("mixed", path, "1.2.5", null, folder.Id, [pacs, secondPacs]);
+            var mixedMonitor = new FolderMonitor(settings, mixedDb, logger)
+            {
+                PacsEchoChecker = (_, _) => Task.FromResult(true),
+                DicomSender = (target, _, _) => Task.FromResult<DicomStatus?>(
+                    target.Id == pacs.Id ? DicomStatus.DuplicateSOPInstance : DicomStatus.Success)
+            };
+            await mixedMonitor.SendAsync(mixedDb.GetNextReadyDelivery()!, CancellationToken.None);
+            await mixedMonitor.SendAsync(mixedDb.GetNextReadyDelivery()!, CancellationToken.None);
+            Assert.Null(mixedDb.GetNextReadyDelivery());
+            Assert.True(File.Exists(path));
+            // Existing duplicate state is persisted, including after reopening SQLite.
+            Assert.True(new Database(settings.DatabaseFile).HasSkippedDuplicateDeliveries(delivery.QueueItemId));
+        }
+    }
 }

@@ -99,6 +99,7 @@ public partial class SettingsWindow : Window
         PacsHealthCheckText.Text = Result.PacsHealthCheckSeconds.ToString();
         StableTimeText.Text = Result.FileStableSeconds.ToString();
         MaxAttemptsText.Text = Result.MaxSendAttempts.ToString();
+        SkipDuplicatesCheck.IsChecked = Result.SkipPacsDuplicates;
         UiHoursText.Text = Result.UiRetentionHours.ToString();
         LogDaysText.Text = Result.LogRetentionDays.ToString();
         DatabaseDaysText.Text = Result.DatabaseRetentionDays.ToString();
@@ -614,6 +615,7 @@ public partial class SettingsWindow : Window
         Result.PacsHealthCheckSeconds = Parse(PacsHealthCheckText.Text, "интервал проверки PACS");
         Result.FileStableSeconds = Parse(StableTimeText.Text, "время стабильности");
         Result.MaxSendAttempts = Parse(MaxAttemptsText.Text, "количество попыток");
+        Result.SkipPacsDuplicates = SkipDuplicatesCheck.IsChecked == true;
         Result.UiRetentionHours = Parse(UiHoursText.Text, "время истории");
         Result.LogRetentionDays = Parse(LogDaysText.Text, "срок журналов");
         Result.DatabaseRetentionDays = Parse(DatabaseDaysText.Text, "срок истории SQLite");
@@ -679,7 +681,7 @@ public partial class SettingsWindow : Window
         UiHoursText.Text, LogDaysText.Text, DatabaseDaysText.Text, BackupDaysText.Text,
         StartWithWindowsCheck.IsChecked, AutoStartCheck.IsChecked,
         StartMinimizedCheck.IsChecked, MinimizeToTrayCheck.IsChecked,
-        DetailedLogCheck.IsChecked, LogPatientNamesCheck.IsChecked,
+        DetailedLogCheck.IsChecked, LogPatientNamesCheck.IsChecked, SkipDuplicatesCheck.IsChecked,
         DatabaseIntegrityCheck.IsChecked);
 
     protected override void OnClosing(CancelEventArgs e)

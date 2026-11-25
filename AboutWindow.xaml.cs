@@ -53,7 +53,7 @@ public partial class AboutWindow : Window
             if (release.Version <= _currentVersion)
             {
                 MessageBox.Show(
-                    $"Установлена актуальная версия DicomMover {_currentVersion.ToString(2)}.",
+                    $"Установлена актуальная версия DicomMover {_currentVersion.ToString(3)}.",
                     "Проверка обновлений",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
@@ -61,7 +61,7 @@ public partial class AboutWindow : Window
             }
 
             var answer = MessageBox.Show(
-                $"Доступна новая версия DicomMover {release.Version.ToString(2)}.\n\nОткрыть страницу загрузки?",
+                $"Доступна новая версия DicomMover {release.Version}.\n\nОткрыть страницу загрузки?",
                 "Доступно обновление",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Information);
